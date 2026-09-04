@@ -22,9 +22,8 @@ if [ ! -f "$KEYSTORE" ]; then keytool -genkeypair -v -keystore "$KEYSTORE" -stor
 "$AAPT2" compile -o "$OUT/res/resources.zip" --dir "$PROJECT_DIR/res"
 "$AAPT2" link -o "$OUT/base.apk" -I "$ANDROID_JAR" --manifest "$PROJECT_DIR/AndroidManifest.xml" --java "$OUT/gen" --min-sdk-version 24 --target-sdk-version 36 "$OUT/res/resources.zip"
 # Active implementation lives in com/. Legacy/support sources remain under src/.
-# Exclude duplicate class names from src so javac sees one implementation of each class.
 find "$PROJECT_DIR/com" -name '*.java' -print > "$OUT/sources.txt"
-find "$PROJECT_DIR/src" -name '*.java' ! -path '*/AppMetadataResolver.java' ! -path '*/FolderController.java' ! -path '*/HomeShortcut.java' ! -path '*/LauncherAdapter.java' ! -path '*/MainActivity.java' ! -path '*/OrganizationPlan.java' ! -print >> "$OUT/sources.txt"
+find "$PROJECT_DIR/src" -name '*.java' ! -path '*/AppMetadataResolver.java' ! -path '*/FolderController.java' ! -path '*/HomeShortcut.java' ! -path '*/LauncherAdapter.java' ! -path '*/MainActivity.java' ! -path '*/OrganizationPlan.java' -print >> "$OUT/sources.txt"
 javac -source 8 -target 8 -encoding UTF-8 -classpath "$ANDROID_JAR" -d "$OUT/classes" @"$OUT/sources.txt"
 find "$OUT/classes" -name '*.class' -print0 | xargs -0 "$D8" --min-api 24 --output "$OUT/dex"
 cp "$OUT/base.apk" "$OUT/AIHomeOrganizer.apk"; (cd "$OUT" && zip -q -j AIHomeOrganizer.apk dex/classes.dex)

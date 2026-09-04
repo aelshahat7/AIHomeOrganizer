@@ -2,6 +2,9 @@ package com.aelshahat.homeorganizer;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
 import android.provider.Settings;
@@ -13,6 +16,7 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -22,7 +26,7 @@ import java.util.Map;
 public class MainActivity extends Activity {
     private TextView status, launcher, summary, report, planView;
     private Spinner shortcutPicker;
-    private Button safeDrag, classify, approve, execute;
+    private Button safeDrag, classify, approve, execute, copyReport;
     private List<HomeShortcut> shortcuts = new ArrayList<>();
     private List<ClassificationResult> classifications = new ArrayList<>();
     private OrganizationPlan plan;
@@ -40,7 +44,7 @@ public class MainActivity extends Activity {
         Button scan = new Button(this); scan.setText("SCAN ALL HOME PAGES"); scan.setOnClickListener(v -> startScan()); root.addView(scan, lp());
 
         summary = new TextView(this); summary.setPadding(0, 10, 0, 6); root.addView(summary, lp());
-        TextView pickTitle = new TextView(this); pickTitle.setText("Safe Drag Test: select one shortcut"); root.addView(pickTitle, lp());
+        TextView pickTitle = new TextView(this); pickTitle.setText("Safe Drag Test: select one regular shortcut"); root.addView(pickTitle, lp());
         shortcutPicker = new Spinner(this); root.addView(shortcutPicker, lp());
         shortcutPicker.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
             @Override public void onItemSelected(android.widget.AdapterView<?> p, android.view.View v, int pos, long id) { if (!updating && pos < shortcuts.size()) { selectedShortcut = shortcuts.get(pos); updateButtons(); } }
@@ -48,12 +52,16 @@ public class MainActivity extends Activity {
         });
         safeDrag = new Button(this); safeDrag.setText("SAFE DRAG PROBE"); safeDrag.setEnabled(false); safeDrag.setOnClickListener(v -> confirmSafeDrag()); root.addView(safeDrag, lp());
         classify = new Button(this); classify.setText("CLASSIFY LOCALLY"); classify.setEnabled(false); classify.setOnClickListener(v -> buildPlan()); root.addView(classify, lp());
-        planView = new TextView(this); planView.setTextSize(14); planView.setPadding(0, 10, 0, 10); root.addView(planView, lp());
+
+        TextView planTitle = new TextView(this); planTitle.setText("Proposed Plan"); planTitle.setTextSize(16); root.addView(planTitle, lp());
+        ScrollView planScroll = new ScrollView(this); planView = new TextView(this); planView.setTextSize(14); planView.setPadding(0, 8, 0, 8); planScroll.addView(planView, new ViewGroup.LayoutParams(-1, -2)); root.addView(planScroll, new LinearLayout.LayoutParams(-1, 0, 0.9f));
         approve = new Button(this); approve.setText("APPROVE PLAN"); approve.setEnabled(false); approve.setOnClickListener(v -> { approved = true; if (plan != null) plan.setApproved(true); append("USER_APPROVED\n"); status.setText("Plan approved. Execute is now enabled."); updateButtons(); }); root.addView(approve, lp());
         execute = new Button(this); execute.setText("EXECUTE APPROVED PLAN"); execute.setEnabled(false); execute.setOnClickListener(v -> confirmExecute()); root.addView(execute, lp());
 
-        report = new TextView(this); report.setTextSize(12); report.setTextIsSelectable(true); report.setPadding(0, 12, 0, 24);
-        ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true); scroll.addView(report, new ViewGroup.LayoutParams(-1, -2)); root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        LinearLayout reportBar = new LinearLayout(this); reportBar.setOrientation(LinearLayout.HORIZONTAL);
+        TextView reportTitle = new TextView(this); reportTitle.setText("Diagnostic Report"); reportTitle.setTextSize(16); reportBar.addView(reportTitle, new LinearLayout.LayoutParams(0, -2, 1));
+        copyReport = new Button(this); copyReport.setText("COPY"); copyReport.setOnClickListener(v -> copyReport()); reportBar.addView(copyReport, new LinearLayout.LayoutParams(-2, -2)); root.addView(reportBar, lp());
+        ScrollView scroll = new ScrollView(this); report = new TextView(this); report.setTextSize(12); report.setTextIsSelectable(true); report.setPadding(0, 8, 0, 24); scroll.addView(report, new ViewGroup.LayoutParams(-1, -2)); root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1.5f));
         setContentView(root); refresh();
     }
 
@@ -93,8 +101,8 @@ public class MainActivity extends Activity {
         for (OrganizationPlan.Item i : plan.getItems()) groups.computeIfAbsent(i.category, k -> new ArrayList<>()).add(i);
         StringBuilder b = new StringBuilder("PROPOSED ORGANIZATION PLAN\n");
         for (Map.Entry<String,List<OrganizationPlan.Item>> e : groups.entrySet()) {
-            b.append("\n").append(e.getKey()).append("\n");
-            for (OrganizationPlan.Item i : e.getValue()) b.append("  - ").append(i.shortcut.label).append(" (confidence ").append(String.format(java.util.Locale.US,"%.2f",i.confidence)).append(")\n");
+            b.append("\n").append(e.getKey()).append(" (" ).append(e.getValue().size()).append(")\n");
+            for (OrganizationPlan.Item i : e.getValue()) b.append("  - ").append(i.shortcut.label).append(" | page=").append(i.shortcut.pageIndex).append(" | confidence ").append(String.format(java.util.Locale.US,"%.2f",i.confidence)).append("\n");
         }
         planView.setText(b.toString());
     }
@@ -114,7 +122,7 @@ public class MainActivity extends Activity {
 
     private List<List<OrganizationPlan.Item>> groupCategories() {
         Map<String,List<OrganizationPlan.Item>> groups = new LinkedHashMap<>();
-        if (plan != null) for (OrganizationPlan.Item i : plan.getItems()) if (!"Needs Review".equals(i.category)) groups.computeIfAbsent(i.category,k -> new ArrayList<>()).add(i);
+        if (plan != null) for (OrganizationPlan.Item i : plan.getItems()) if (!i.shortcut.hotseat && !"Needs Review".equals(i.category)) groups.computeIfAbsent(i.category,k -> new ArrayList<>()).add(i);
         return new ArrayList<>(groups.values());
     }
 
@@ -131,15 +139,24 @@ public class MainActivity extends Activity {
         }));
     }
 
+    private void copyReport() {
+        String text = report == null ? "" : report.getText().toString();
+        ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        if (cm != null) { cm.setPrimaryClip(ClipData.newPlainText("AI Home Organizer Diagnostic Report", text)); Toast.makeText(this, "Report copied", Toast.LENGTH_SHORT).show(); }
+    }
+
     private void refresh() {
         HomeAccessibilityService s = HomeAccessibilityService.getInstance();
         launcher.setText("Launcher: " + (s == null || s.getLastLauncherPackage() == null ? "not scanned" : s.getLastLauncherPackage()) + " | Adapter: " + (s == null || s.getLastAdapterName() == null ? "-" : s.getLastAdapterName()));
-        shortcuts = s == null ? new ArrayList<>() : new ArrayList<>(s.getShortcuts());
-        updating = true; ArrayList<String> labels = new ArrayList<>(); for (HomeShortcut h : shortcuts) labels.add(h.label + " | page=" + h.pageIndex + (h.hotseat ? " | HOTSEAT" : ""));
-        if (labels.isEmpty()) labels.add("No shortcuts detected yet"); shortcutPicker.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, labels));
+        List<HomeShortcut> all = s == null ? new ArrayList<>() : new ArrayList<>(s.getShortcuts());
+        shortcuts = new ArrayList<>(); int hotseatCount = 0;
+        for (HomeShortcut h : all) { if (h.hotseat) hotseatCount++; else shortcuts.add(h); }
+        updating = true; ArrayList<String> labels = new ArrayList<>(); for (HomeShortcut h : shortcuts) labels.add(h.label + " | page=" + h.pageIndex);
+        if (labels.isEmpty()) labels.add("No regular shortcuts detected yet"); shortcutPicker.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, labels));
         if (!shortcuts.isEmpty()) { selectedShortcut = shortcuts.get(0); shortcutPicker.setSelection(0); } else selectedShortcut = null; updating = false;
-        int pages = s == null ? 0 : s.getPages().size(); summary.setText("Pages detected: " + pages + "\nShortcuts detected: " + shortcuts.size());
+        int pages = s == null ? 0 : s.getPages().size(); summary.setText("Pages detected: " + pages + "\nRegular shortcuts: " + shortcuts.size() + "\nHotseat instances: " + hotseatCount);
         report.setText(s == null ? "Service OFF" : s.getSavedReport()); if (plan != null) renderPlan(); updateButtons();
+        if (copyReport != null) copyReport.setEnabled(report.length() > 0);
         status.setText(s == null ? "Service OFF" : "Service ON");
     }
 

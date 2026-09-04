@@ -2,12 +2,55 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ANDROID_HOME="${ANDROID_HOME:-$HOME/lib/android-sdk-9123335}"
-PLATFORM="${ANDROID_HOME}/platforms/android-36"
+
+# Prefer an explicitly configured SDK, but do not assume the SDK directory name.
+# This matters on Termux because the SDK may have been unpacked under a generated
+# directory name and Android x86_64 SDK executables must never be used on ARM64.
+SDK_CANDIDATES=()
+[ -n "${ANDROID_HOME:-}" ] && SDK_CANDIDATES+=("$ANDROID_HOME")
+[ -n "${ANDROID_SDK_ROOT:-}" ] && SDK_CANDIDATES+=("$ANDROID_SDK_ROOT")
+SDK_CANDIDATES+=(
+    "$HOME/lib/android-sdk-9123335"
+    "$HOME/lib/android-sdk"
+    "$HOME/android-sdk"
+    "$PREFIX/opt/android-sdk"
+    "$PREFIX/share/android-sdk"
+)
+
+ANDROID_HOME=""
+for candidate in "${SDK_CANDIDATES[@]}"; do
+    if [ -f "$candidate/platforms/android-36/android.jar" ]; then
+        ANDROID_HOME="$candidate"
+        break
+    fi
+done
+
+# Also discover an installed API 36 platform under ~/lib without requiring the
+# caller to know the SDK's generated directory name.
+if [ -z "$ANDROID_HOME" ] && [ -d "$HOME/lib" ]; then
+    while IFS= read -r jar; do
+        ANDROID_HOME="${jar%/platforms/android-36/android.jar}"
+        break
+    done < <(find "$HOME/lib" -type f -path '*/platforms/android-36/android.jar' -print 2>/dev/null | head -n 1)
+fi
+
+if [ -z "$ANDROID_HOME" ]; then
+    echo "ERROR: Android API 36 platform (android-36/android.jar) was not found."
+    echo ""
+    echo "This build requires the API 36 platform, but it does NOT require SDK x86 binaries."
+    echo "Install/unpack android-36 into an ARM64-accessible SDK, then run this script again."
+    echo "To locate an existing platform, run:"
+    echo "  find \"$HOME\" -type f -path '*/platforms/android-36/android.jar' -print 2>/dev/null"
+    echo ""
+    echo "If the command prints a path, export ANDROID_HOME to the directory before /platforms/android-36."
+    exit 1
+fi
+
+PLATFORM="$ANDROID_HOME/platforms/android-36"
 AAPT2="${AAPT2:-$PREFIX/bin/aapt2}"
 D8="${D8:-$PREFIX/bin/d8}"
 APKSIGNER="${APKSIGNER:-$PREFIX/bin/apksigner}"
-ANDROID_JAR="${PLATFORM}/android.jar"
+ANDROID_JAR="$PLATFORM/android.jar"
 
 require_file() {
     local path="$1"
@@ -26,7 +69,7 @@ require_exec() {
     fi
 }
 
-# These are the ARM64-native Termux tools. Do not fall back to SDK x86 binaries.
+# These are the ARM64-native Termux tools. Never fall back to SDK x86 binaries.
 require_exec "$AAPT2"
 require_exec "$D8"
 require_exec "$APKSIGNER"
@@ -55,6 +98,10 @@ if [ ! -f "$KEYSTORE" ]; then
 else
     echo "Using persistent debug keystore: $KEYSTORE"
 fi
+
+echo "Using Android SDK: $ANDROID_HOME"
+echo "Using Android platform: $ANDROID_JAR"
+echo "Using native Termux tools: $AAPT2 | $D8 | $APKSIGNER"
 
 "$AAPT2" compile \
     -o "$OUT/res/resources.zip" \

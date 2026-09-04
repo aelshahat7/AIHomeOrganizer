@@ -38,6 +38,11 @@ public final class FolderController {
             }
             List<HomeShortcut> live = LauncherAdapter.forPackage(pkg).findShortcuts(root, pkg, service.getCurrentPage());
             HomeShortcut a = find(live, source), b = find(live, target);
+            // Launcher3 can expose the same visible shortcut through a different accessibility
+            // node shape after navigation. Fall back to direct label/bounds lookup instead of
+            // treating a scanner miss as proof that the shortcut disappeared.
+            if (a == null) a = findByVisibleLabel(root, source.label, source.pageIndex, source.centerX, source.centerY);
+            if (b == null) b = findByVisibleLabel(root, target.label, target.pageIndex, target.centerX, target.centerY);
             service.appendDiagnostic("LIVE_SCAN attempt=" + (attempt + 1) + " currentPage=" + service.getCurrentPage()
                     + " requestedPage=" + source.pageIndex + " source=" + describe(a) + " target=" + describe(b) + "\n");
             root.recycle();
@@ -63,6 +68,39 @@ public final class FolderController {
                 }
             });
         }, attempt == 0 ? 250 : 450);
+    }
+
+    private HomeShortcut findByVisibleLabel(AccessibilityNodeInfo n, String wanted, int page, int expectedX, int expectedY) {
+        if (n == null) return null;
+        String label = normalize(n.getText());
+        if (label.isEmpty()) label = normalize(n.getContentDescription());
+        Rect r = new Rect(); n.getBoundsInScreen(r);
+        if (normalize(wanted).equals(label) && n.isVisibleToUser() && r.width() > 0 && r.height() > 0) {
+            boolean hotseat = looksLikeHotseat(n, r);
+            if (!hotseat && Math.abs(r.centerX() - expectedX) <= 220 && Math.abs(r.centerY() - expectedY) <= 220) {
+                return new HomeShortcut(n.getText() != null ? n.getText().toString() : n.getContentDescription().toString(),
+                        String.valueOf(n.getPackageName()), null, String.valueOf(n.getClassName()),
+                        n.getViewIdResourceName(), r, n.isClickable(), n.isLongClickable(),
+                        n.isVisibleToUser(), 1f, "live-direct-label-fallback", page, false, -1, -1);
+            }
+        }
+        for (int i = 0; i < n.getChildCount(); i++) {
+            AccessibilityNodeInfo c = n.getChild(i);
+            HomeShortcut found = findByVisibleLabel(c, wanted, page, expectedX, expectedY);
+            if (c != null) c.recycle();
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    private boolean looksLikeHotseat(AccessibilityNodeInfo n, Rect b) {
+        String id = normalize(n.getViewIdResourceName());
+        if (id.contains("hotseat") || id.contains("dock")) return true;
+        AccessibilityNodeInfo root = service.getRootInActiveWindow();
+        if (root == null) return false;
+        Rect screen = new Rect(); root.getBoundsInScreen(screen); root.recycle();
+        float top = (float)(b.top - screen.top) / Math.max(1, screen.height());
+        return top > .78f;
     }
 
     private void verify(HomeShortcut source, HomeShortcut target, Callback callback, int attempt) {

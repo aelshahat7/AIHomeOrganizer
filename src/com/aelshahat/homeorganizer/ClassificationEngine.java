@@ -5,10 +5,8 @@ import android.content.pm.ApplicationInfo;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 
 /** Offline multi-signal classifier. It adapts to whatever apps are installed on the device. */
 public final class ClassificationEngine {
@@ -24,16 +22,7 @@ public final class ClassificationEngine {
 
     public List<ClassificationResult> classify(List<HomeShortcut> shortcuts) {
         List<ClassificationResult> out = new ArrayList<>();
-        Map<String, ClassificationResult> cache = new LinkedHashMap<>();
-        for (HomeShortcut s : shortcuts) {
-            String key = AppMetadataResolver.normalize(s.label);
-            ClassificationResult r = cache.get(key);
-            if (r == null) {
-                r = classifyOne(s);
-                cache.put(key, r);
-            }
-            out.add(r);
-        }
+        for (HomeShortcut s : shortcuts) out.add(classifyOne(s));
         return out;
     }
 
@@ -42,6 +31,7 @@ public final class ClassificationEngine {
         String pkg = "";
         int systemCategory = ApplicationInfo.CATEGORY_UNDEFINED;
         AppMetadataResolver.Metadata meta = resolver == null ? null : resolver.resolve(s.label);
+        boolean unique = meta != null && meta.unique;
         if (meta != null) {
             pkg = AppMetadataResolver.normalize(meta.packageName);
             systemCategory = meta.applicationCategory;
@@ -71,7 +61,6 @@ public final class ClassificationEngine {
         keyword(scores, reasons, "Productivity", label, 18, "Productivity keyword");
         keyword(scores, reasons, "Utilities", label, 16, "Utility keyword");
 
-        // Android's category is intentionally only a supporting signal.
         if (systemCategory == ApplicationInfo.CATEGORY_GAME)
             add(scores, reasons, "Games", 20, "Android application category");
         else if (systemCategory == ApplicationInfo.CATEGORY_AUDIO || systemCategory == ApplicationInfo.CATEGORY_IMAGE)
@@ -95,17 +84,18 @@ public final class ClassificationEngine {
 
         String reason = reasons[best < 0 ? 0 : best];
         if (reason == null) reason = "No reliable local signals matched";
-        if (meta != null) reason += " | resolved=" + meta.packageName;
-        return new ClassificationResult(s, category, confidence, reason);
+        if (meta != null) reason += " | resolved=" + meta.packageName + " | resolution=" + (unique ? "unique" : "ambiguous");
+        else reason += " | resolution=unresolved";
+        return new ClassificationResult(s, category, confidence, reason,
+                meta == null ? "" : meta.packageName, unique);
     }
 
     private void score(int[] scores, String[] reasons, String category, String pkg, String label, int points, String reason) {
         String p = pkg + " " + label;
-        String c = category.toLowerCase(Locale.ROOT);
         boolean hit = false;
         switch (category) {
             case "Communication": hit = contains(p,"whatsapp","telegram","messenger","signal","dialer","phone","contacts","sms"); break;
-            case "Social": hit = contains(p,"facebook","instagram","twitter","tiktok","snapchat","linkedin","reddit"); break;
+            case "Social": hit = contains(p,"facebook","instagram","twitter","x.com","tiktok","snapchat","linkedin","reddit"); break;
             case "Work": hit = contains(p,"business","outlook","office","teams","slack","adsmanager","businesssuite"); break;
             case "Finance": hit = contains(p,"bank","finance","wallet","money","cash","instapay","paypal","fawry"); break;
             case "Shopping": hit = contains(p,"amazon","shopping","shop","noon","jumia","shein","ebay","talabat","delivery"); break;
@@ -113,7 +103,7 @@ public final class ClassificationEngine {
             case "Games": hit = contains(p,"game","games","pubg","clash","minecraft","brawl","wildrift","candycrush","gossipharbor"); break;
             case "Travel": hit = contains(p,"maps","uber","careem","booking","travel","airbnb","trip"); break;
             case "Productivity": hit = contains(p,"drive","docs","sheets","excel","word","notion","calendar","task","todo","keep"); break;
-            case "Utilities": hit = contains(p,"settings","calculator","clock","files","xplore","speedtest","router","authenticator","smart\u0020switch"); break;
+            case "Utilities": hit = contains(p,"settings","calculator","clock","files","xplore","speedtest","router","authenticator","smart switch"); break;
         }
         if (hit) add(scores, reasons, category, points, reason);
     }

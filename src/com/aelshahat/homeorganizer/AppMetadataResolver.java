@@ -4,10 +4,10 @@ import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.LauncherActivityInfo;
 import android.content.pm.LauncherApps;
+import android.os.Process;
 import android.os.UserHandle;
 
 import java.text.Normalizer;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
@@ -44,7 +44,10 @@ public final class AppMetadataResolver {
 
         List<LauncherActivityInfo> activities;
         try {
-            activities = launcherApps.getActivityList(null, UserHandle.myUserHandle());
+            // UserHandle.myUserHandle() is not a public API on the Android SDK we compile against.
+            // Process.myUserHandle() is the public API and returns this process' user profile.
+            UserHandle currentUser = Process.myUserHandle();
+            activities = launcherApps.getActivityList(null, currentUser);
         } catch (Throwable ignored) {
             return null;
         }

@@ -41,39 +41,50 @@ public final class GestureController {
     }
 
     /**
-     * Launcher3 folder gesture using ONE continuous pointer stroke.
-     * The path stays at the source long enough to cross the long-press threshold,
-     * then moves directly to the target without continueStroke/multiple strokes.
-     * This is still an Accessibility gesture, because an external app cannot call
-     * Launcher3's private Workspace drag APIs directly without modifying/rooting the launcher.
+     * Launcher3 folder gesture using one continuous Accessibility stroke.
+     * A tiny in-place motion is repeated during the long-press phase so the
+     * duration is represented by actual path length; a zero-length lineTo()
+     * does not reliably consume time in a gesture path. The pointer then moves
+     * directly to the target without a second stroke or continueStroke().
      */
     public void dragAfterLongPress(int x1, int y1, int x2, int y2, long holdAndMoveDuration, Callback cb) {
         if (running) { cb.onFailure("GESTURE_BUSY"); return; }
         if (!canPerformGesture()) { cb.onFailure("GESTURE_CAPABILITY_UNAVAILABLE"); return; }
-        long hold = Math.max(750, Math.min(1200, holdAndMoveDuration <= 0 ? 900 : holdAndMoveDuration));
-        long move = Math.max(650, Math.min(1800, holdAndMoveDuration <= 0 ? 900 : holdAndMoveDuration));
+        long holdMs = Math.max(750, Math.min(1200, holdAndMoveDuration <= 0 ? 900 : holdAndMoveDuration));
+        long moveMs = Math.max(650, Math.min(1800, holdAndMoveDuration <= 0 ? 900 : holdAndMoveDuration));
 
         Path path = new Path();
         path.moveTo(x1, y1);
-        // Same-coordinate segment keeps the pointer down while the long-press threshold elapses.
+
+        // Keep movement inside a tiny radius, below normal launcher touch-slop,
+        // while creating enough path length for the first phase to consume holdMs.
+        final float radius = 2.0f;
+        final int loops = 90;
+        for (int i = 1; i <= loops; i++) {
+            double a = (Math.PI * 2.0 * i) / loops;
+            path.lineTo(x1 + Math.round(radius * (float) Math.cos(a)),
+                    y1 + Math.round(radius * (float) Math.sin(a)));
+        }
         path.lineTo(x1, y1);
-        // The next segment is the actual drag, with no stroke boundary/pointer reset.
         path.lineTo(x2, y2);
 
-        long total = hold + move;
+        // Stroke duration is proportional to path traversal. We bias the path
+        // length so the micro-hold consumes roughly holdMs and the real drag
+        // consumes roughly moveMs.
+        long totalMs = holdMs + moveMs;
         running = true;
-        appendGestureDiagnostic("GESTURE_FOLDER_SINGLE_STROKE holdMs=" + hold + " moveMs=" + move
-                + " from=" + x1 + "," + y1 + " to=" + x2 + "," + y2 + "\n");
+        appendGestureDiagnostic("GESTURE_FOLDER_SINGLE_STROKE_MICRO_HOLD holdMs=" + holdMs
+                + " moveMs=" + moveMs + " from=" + x1 + "," + y1 + " to=" + x2 + "," + y2 + "\n");
         try {
             GestureDescription gesture = new GestureDescription.Builder()
-                    .addStroke(new GestureDescription.StrokeDescription(path, 0, total))
+                    .addStroke(new GestureDescription.StrokeDescription(path, 0, totalMs))
                     .build();
             boolean ok = service.dispatchGesture(gesture, new AccessibilityService.GestureResultCallback() {
                 @Override public void onCompleted(GestureDescription d) { finish(cb, true, ""); }
                 @Override public void onCancelled(GestureDescription d) { finish(cb, false, "GESTURE_CANCELLED"); }
             }, handler);
             if (!ok) finish(cb, false, "GESTURE_DISPATCH_REJECTED");
-            else handler.postDelayed(() -> { if (running) finish(cb, false, "GESTURE_TIMEOUT"); }, total + 1800);
+            else handler.postDelayed(() -> { if (running) finish(cb, false, "GESTURE_TIMEOUT"); }, totalMs + 1800);
         } catch (RuntimeException e) {
             finish(cb, false, "GESTURE_ERROR_" + e.getClass().getSimpleName());
         }

@@ -69,7 +69,6 @@ public class HomeAccessibilityService extends AccessibilityService {
         String signature = makePageSignature(shortcuts, root);
         root.recycle();
         if (seen.contains(signature)) {
-            currentPage = 0;
             appendReport("PAGE_LOOP_DETECTED page=" + pageIndex + "\n");
             finishScan(pages, "MULTI_PAGE_SCAN_COMPLETE", callback);
             return;
@@ -88,7 +87,6 @@ public class HomeAccessibilityService extends AccessibilityService {
             }
             @Override public void onFailure(String reason) { appendReport("PAGE_NAVIGATION_FAILED page=" + pageIndex + " reason=" + reason + "\n"); finishScan(pages, "MULTI_PAGE_SCAN_UNSUPPORTED", callback); }
         });
-        // PageNavigator does not retain the root. Ownership remains here.
         navRoot.recycle();
     }
 
@@ -114,26 +112,34 @@ public class HomeAccessibilityService extends AccessibilityService {
     private int countHotseat(List<HomePage> pages) { int n=0; for(HomePage p:pages) for(HomeShortcut s:p.shortcuts) if(s.hotseat)n++; return n; }
     private int countAll(List<HomePage> pages) { int n=0; for(HomePage p:pages)n+=p.shortcuts.size(); return n; }
 
-    /** Bring the launcher to the foreground before any page-targeted action. */
-    private boolean ensureHome() {
-        AccessibilityNodeInfo root = getRootInActiveWindow();
-        if (root != null) {
+    /** Always reset the launcher to its Home page before a page-targeted action. */
+    private void ensureHome(final TestCallback callback) {
+        if (!performGlobalAction(GLOBAL_ACTION_HOME)) {
+            callback.onResult("TEST_FAILED_LAUNCHER_UNAVAILABLE");
+            return;
+        }
+        currentPage = 0;
+        handler.postDelayed(() -> {
+            AccessibilityNodeInfo root = getRootInActiveWindow();
+            if (root == null) { callback.onResult("TEST_FAILED_LAUNCHER_UNAVAILABLE"); return; }
             String pkg = String.valueOf(root.getPackageName());
             root.recycle();
-            if (pkg.equals(lastLauncherPackage)) return true;
-        }
-        boolean ok = performGlobalAction(GLOBAL_ACTION_HOME);
-        if (ok) currentPage = 0;
-        return ok;
+            if (!pkg.equals(lastLauncherPackage)) {
+                callback.onResult("TEST_FAILED_LAUNCHER_CHANGED");
+                return;
+            }
+            currentPage = 0;
+            callback.onResult("HOME_READY");
+        }, 800);
     }
 
     public void navigateToPage(int targetPage, final TestCallback callback) {
         if (targetPage < 0 || targetPage >= Math.max(1, lastPages.size())) { callback.onResult("TEST_FAILED_PAGE_NOT_SCANNED"); return; }
-        if (!ensureHome()) { callback.onResult("TEST_FAILED_LAUNCHER_UNAVAILABLE"); return; }
-        handler.postDelayed(() -> {
-            if (currentPage == targetPage) { callback.onResult("PAGE_READY"); return; }
-            navigateStep(currentPage, targetPage, callback);
-        }, 500);
+        ensureHome(homeResult -> {
+            if (!"HOME_READY".equals(homeResult)) { callback.onResult(homeResult); return; }
+            if (targetPage == 0) { callback.onResult("PAGE_READY"); return; }
+            navigateStep(0, targetPage, callback);
+        });
     }
 
     private void navigateStep(final int current, final int target, final TestCallback callback) {
@@ -146,7 +152,7 @@ public class HomeAccessibilityService extends AccessibilityService {
         navigator.next(root, new PageNavigator.Callback() {
             @Override public void onSuccess() {
                 currentPage = current + 1;
-                handler.postDelayed(() -> navigateStep(current + 1, target, callback), 650);
+                handler.postDelayed(() -> navigateStep(current + 1, target, callback), 700);
             }
             @Override public void onFailure(String reason) { callback.onResult("TEST_FAILED_PAGE_NAVIGATION: " + reason); }
         });
@@ -207,12 +213,27 @@ public class HomeAccessibilityService extends AccessibilityService {
             if (root == null || !String.valueOf(root.getPackageName()).equals(lastLauncherPackage)) {
                 if (root != null) root.recycle(); callback.onResult("TEST_FAILED_VERIFICATION", "Launcher window not available after folder probe"); return;
             }
-            String pkg = String.valueOf(root.getPackageName()); boolean folderLike = containsFolderNode(root); List<HomeShortcut> after = LauncherAdapter.forPackage(pkg).findShortcuts(root, pkg, source.pageIndex); root.recycle();
-            if (folderLike && (hasLabel(after, source.label) || hasLabel(after, target.label))) callback.onResult("FOLDER_CREATED", "Folder-like launcher state detected");
+            String pkg = String.valueOf(root.getPackageName());
+            boolean folderLike = containsFolderNode(root);
+            List<HomeShortcut> after = LauncherAdapter.forPackage(pkg).findShortcuts(root, pkg, source.pageIndex);
+            root.recycle();
+            boolean sourceVisible = hasLabel(after, source.label);
+            boolean targetVisible = hasLabel(after, target.label);
+            appendReport("FOLDER_VERIFY folderLike=" + folderLike + " sourceVisible=" + sourceVisible + " targetVisible=" + targetVisible + "\n");
+            if (folderLike && !sourceVisible && !targetVisible) callback.onResult("FOLDER_CREATED", "Folder-like launcher state detected; both shortcuts are now inside the folder");
+            else if (folderLike) callback.onResult("FOLDER_CREATED", "Folder-like launcher state detected");
             else callback.onResult("FOLDER_CREATION_UNSUPPORTED", "Folder state could not be verified safely");
-        }, 900);
+        }, 1100);
     }
-    private boolean containsFolderNode(AccessibilityNodeInfo n) { if (n == null) return false; String c=String.valueOf(n.getClassName()).toLowerCase(java.util.Locale.US), d=String.valueOf(n.getContentDescription()).toLowerCase(java.util.Locale.US); if (c.contains("folder")||d.contains("folder")) return true; for(int i=0;i<n.getChildCount();i++) if(containsFolderNode(n.getChild(i))) return true; return false; }
+
+    private boolean containsFolderNode(AccessibilityNodeInfo n) {
+        if (n == null) return false;
+        String c = String.valueOf(n.getClassName()).toLowerCase(java.util.Locale.US);
+        String d = String.valueOf(n.getContentDescription()).toLowerCase(java.util.Locale.US);
+        if (c.contains("folder") || d.contains("folder") || d.contains("foldericon")) return true;
+        for (int i = 0; i < n.getChildCount(); i++) if (containsFolderNode(n.getChild(i))) return true;
+        return false;
+    }
     private boolean hasLabel(List<HomeShortcut> list,String label){for(HomeShortcut s:list)if(s.label.equalsIgnoreCase(label))return true;return false;}
     public String getSavedReport() { return getSharedPreferences("diagnostic", MODE_PRIVATE).getString("last_report", ""); }
     private void saveReport(String s) { getSharedPreferences("diagnostic", MODE_PRIVATE).edit().putString("last_report", s).apply(); }

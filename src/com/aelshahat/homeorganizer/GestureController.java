@@ -40,16 +40,46 @@ public final class GestureController {
         Path p = new Path(); p.moveTo(x1, y1); p.lineTo(x2, y2); run(p, 0, Math.max(700, Math.min(3000, duration)), cb);
     }
 
+    /**
+     * Launcher3 folder gesture: keep the same pointer down for a real long-press,
+     * then continue that exact stroke into the target. API 26+ supports continued
+     * strokes and Android 16 is API 36 on the target device.
+     */
     public void dragAfterLongPress(int x1, int y1, int x2, int y2, long holdAndMoveDuration, Callback cb) {
         if (running) { cb.onFailure("GESTURE_BUSY"); return; }
         if (!canPerformGesture()) { cb.onFailure("GESTURE_CAPABILITY_UNAVAILABLE"); return; }
-        int safeX = Math.max(-3000, Math.min(3000, x2));
-        int safeY = Math.max(-3000, Math.min(3000, y2));
-        Path p = new Path();
-        p.moveTo(x1, y1);
-        p.lineTo(x1, y1);
-        p.lineTo(safeX, safeY);
-        run(p, 0, Math.max(900, Math.min(3000, holdAndMoveDuration)), cb);
+        long hold = Math.max(700, Math.min(1000, holdAndMoveDuration <= 0 ? 850 : holdAndMoveDuration));
+        long move = Math.max(700, Math.min(1000, holdAndMoveDuration <= 0 ? 850 : holdAndMoveDuration));
+
+        Path holdPath = new Path();
+        holdPath.moveTo(x1, y1);
+        holdPath.lineTo(x1, y1);
+        GestureDescription.StrokeDescription first =
+                new GestureDescription.StrokeDescription(holdPath, 0, hold, true);
+
+        Path movePath = new Path();
+        movePath.moveTo(x1, y1);
+        movePath.lineTo(x2, y2);
+        GestureDescription.StrokeDescription second =
+                first.continueStroke(movePath, 0, move, false);
+
+        GestureDescription gesture = new GestureDescription.Builder()
+                .addStroke(first)
+                .addStroke(second)
+                .build();
+        running = true;
+        appendGestureDiagnostic("GESTURE_FOLDER_DISPATCH holdMs=" + hold + " moveMs=" + move
+                + " from=" + x1 + "," + y1 + " to=" + x2 + "," + y2 + "\n");
+        try {
+            boolean ok = service.dispatchGesture(gesture, new AccessibilityService.GestureResultCallback() {
+                @Override public void onCompleted(GestureDescription d) { finish(cb, true, ""); }
+                @Override public void onCancelled(GestureDescription d) { finish(cb, false, "GESTURE_CANCELLED"); }
+            }, handler);
+            if (!ok) finish(cb, false, "GESTURE_DISPATCH_REJECTED");
+            else handler.postDelayed(() -> { if (running) finish(cb, false, "GESTURE_TIMEOUT"); }, hold + move + 1800);
+        } catch (RuntimeException e) {
+            finish(cb, false, "GESTURE_ERROR_" + e.getClass().getSimpleName());
+        }
     }
 
     private void run(Path path, long start, long duration, Callback cb) {
@@ -71,5 +101,12 @@ public final class GestureController {
         if (!running) return;
         running = false; handler.removeCallbacksAndMessages(null);
         if (success) cb.onSuccess(); else cb.onFailure(reason);
+    }
+
+    private void appendGestureDiagnostic(String text) {
+        if (service instanceof HomeAccessibilityService) {
+            HomeAccessibilityService s = (HomeAccessibilityService) service;
+            s.appendDiagnostic(text);
+        }
     }
 }

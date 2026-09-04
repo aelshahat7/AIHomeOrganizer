@@ -5,8 +5,10 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.view.Gravity;
+import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 public class MainActivity extends Activity {
@@ -47,13 +49,19 @@ public class MainActivity extends Activity {
             }
             status.setText("Scanning Home Screen...");
             service.scanHomeScreen();
+            scan.postDelayed(this::refreshReport, 1200);
         });
         root.addView(scan, new LinearLayout.LayoutParams(-1, -2));
 
         report = new TextView(this);
         report.setTextSize(13);
-        report.setPadding(0, 24, 0, 0);
-        root.addView(report, new LinearLayout.LayoutParams(-1, 0, 1));
+        report.setPadding(0, 24, 0, 24);
+        report.setTextIsSelectable(true);
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.addView(report, new ViewGroup.LayoutParams(-1, -2));
+        root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
 
         setContentView(root);
         refreshReport();

@@ -32,3 +32,6 @@ Thumbs.db
 # Termux / temporary
 *.tmp
 *.temp
+
+# Persistent local debug signing key
+.local/

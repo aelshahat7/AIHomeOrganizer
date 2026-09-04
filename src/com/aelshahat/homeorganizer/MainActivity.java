@@ -110,13 +110,13 @@ public class MainActivity extends Activity {
     private void confirmExecute() {
         if (!approved || plan == null) return;
         new AlertDialog.Builder(this).setTitle("Execute Home Screen changes?")
-                .setMessage("The app will execute approved folder operations one at a time and STOP on the first verification failure. This may modify your Home Screen. Continue?")
+                .setMessage("The app will first return to the Home Screen, then execute approved folder operations one at a time and STOP on the first verification failure. This may modify your Home Screen. Continue?")
                 .setNegativeButton("Cancel", null).setPositiveButton("Execute", (d,w) -> executePlan()).show();
     }
 
     private void executePlan() {
         HomeAccessibilityService s = HomeAccessibilityService.getInstance(); if (s == null) return;
-        execute.setEnabled(false); append("EXECUTION_STARTED\n"); status.setText("Executing one verified operation at a time...");
+        execute.setEnabled(false); append("EXECUTION_STARTED\n"); status.setText("Returning to Home Screen, then executing one verified operation at a time...");
         executeNextCategory(s, new ArrayList<>(groupCategories()), 0);
     }
 
@@ -131,7 +131,7 @@ public class MainActivity extends Activity {
         List<OrganizationPlan.Item> items = groups.get(index);
         if (items.size() < 2) { executeNextCategory(s, groups, index + 1); return; }
         OrganizationPlan.Item a = items.get(0), b = items.get(1);
-        append("FOLDER_OPERATION category=" + a.category + " source=" + a.shortcut.label + " target=" + b.shortcut.label + "\n");
+        append("FOLDER_OPERATION category=" + a.category + " source=" + a.shortcut.label + " target=" + b.shortcut.label + " page=" + a.shortcut.pageIndex + "\n");
         s.createFolder(a.shortcut, b.shortcut, (code, detail) -> runOnUiThread(() -> {
             append(code + " detail=" + detail + "\n");
             if (!"FOLDER_CREATED".equals(code)) { append("ORGANIZATION_STOPPED_AFTER_FAILURE\n"); status.setText("ORGANIZATION_STOPPED_AFTER_FAILURE: " + code); return; }
@@ -157,7 +157,7 @@ public class MainActivity extends Activity {
         int pages = s == null ? 0 : s.getPages().size(); summary.setText("Pages detected: " + pages + "\nRegular shortcuts: " + shortcuts.size() + "\nHotseat instances: " + hotseatCount);
         report.setText(s == null ? "Service OFF" : s.getSavedReport()); if (plan != null) renderPlan(); updateButtons();
         if (copyReport != null) copyReport.setEnabled(report.length() > 0);
-        status.setText(s == null ? "Service OFF" : "Service ON");
+        if (status.getText() == null || status.getText().toString().isEmpty()) status.setText(s == null ? "Service OFF" : "Service ON");
     }
 
     private void updateButtons() {

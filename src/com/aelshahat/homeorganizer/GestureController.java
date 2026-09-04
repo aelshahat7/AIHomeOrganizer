@@ -42,10 +42,9 @@ public final class GestureController {
 
     /**
      * Launcher3 folder gesture using one continuous Accessibility stroke.
-     * A tiny in-place motion is repeated during the long-press phase so the
-     * duration is represented by actual path length; a zero-length lineTo()
-     * does not reliably consume time in a gesture path. The pointer then moves
-     * directly to the target without a second stroke or continueStroke().
+     * A tiny-radius micro-motion keeps the pointer effectively on the source
+     * while consuming the long-press phase, then the same pointer moves to the
+     * target. No second stroke and no continueStroke() are used.
      */
     public void dragAfterLongPress(int x1, int y1, int x2, int y2, long holdAndMoveDuration, Callback cb) {
         if (running) { cb.onFailure("GESTURE_BUSY"); return; }
@@ -53,28 +52,26 @@ public final class GestureController {
         long holdMs = Math.max(750, Math.min(1200, holdAndMoveDuration <= 0 ? 900 : holdAndMoveDuration));
         long moveMs = Math.max(650, Math.min(1800, holdAndMoveDuration <= 0 ? 900 : holdAndMoveDuration));
 
+        float distance = (float) Math.hypot(x2 - x1, y2 - y1);
+        float microRadius = 2.0f;
+        float circumference = (float) (2.0 * Math.PI * microRadius);
+        int loops = Math.max(1, Math.min(80, Math.round((distance * holdMs / (float) moveMs) / circumference)));
+
         Path path = new Path();
         path.moveTo(x1, y1);
-
-        // Keep movement inside a tiny radius, below normal launcher touch-slop,
-        // while creating enough path length for the first phase to consume holdMs.
-        final float radius = 2.0f;
-        final int loops = 90;
         for (int i = 1; i <= loops; i++) {
             double a = (Math.PI * 2.0 * i) / loops;
-            path.lineTo(x1 + Math.round(radius * (float) Math.cos(a)),
-                    y1 + Math.round(radius * (float) Math.sin(a)));
+            path.lineTo(x1 + Math.round(microRadius * (float) Math.cos(a)),
+                    y1 + Math.round(microRadius * (float) Math.sin(a)));
         }
         path.lineTo(x1, y1);
         path.lineTo(x2, y2);
 
-        // Stroke duration is proportional to path traversal. We bias the path
-        // length so the micro-hold consumes roughly holdMs and the real drag
-        // consumes roughly moveMs.
         long totalMs = holdMs + moveMs;
         running = true;
         appendGestureDiagnostic("GESTURE_FOLDER_SINGLE_STROKE_MICRO_HOLD holdMs=" + holdMs
-                + " moveMs=" + moveMs + " from=" + x1 + "," + y1 + " to=" + x2 + "," + y2 + "\n");
+                + " moveMs=" + moveMs + " loops=" + loops + " from=" + x1 + "," + y1
+                + " to=" + x2 + "," + y2 + "\n");
         try {
             GestureDescription gesture = new GestureDescription.Builder()
                     .addStroke(new GestureDescription.StrokeDescription(path, 0, totalMs))

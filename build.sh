@@ -12,24 +12,18 @@ ZIPALIGN="${ZIPALIGN:-${BUILD_TOOLS}/zipalign}"
 ANDROID_JAR="${PLATFORM}/android.jar"
 
 for tool in "$AAPT2" "$D8" "$APKSIGNER" "$ZIPALIGN" "$ANDROID_JAR"; do
-    if [ ! -e "$tool" ] || [ ! -x "$tool" ] && [[ "$tool" != *.jar ]]; then
+    if [ ! -e "$tool" ] || { [ ! -x "$tool" ] && [[ "$tool" != *.jar ]]; }; then
         echo "Missing required build component: $tool"
         exit 1
     fi
 done
 
-if ! command -v javac >/dev/null 2>&1; then
-    echo "javac not found. Install OpenJDK first."
-    exit 1
-fi
-if ! command -v zip >/dev/null 2>&1; then
-    echo "zip command not found. Run: pkg install zip"
-    exit 1
-fi
+command -v javac >/dev/null 2>&1 || { echo "javac not found. Install OpenJDK first."; exit 1; }
+command -v zip >/dev/null 2>&1 || { echo "zip command not found. Run: pkg install zip"; exit 1; }
 
 OUT="$PROJECT_DIR/build"
 rm -rf "$OUT"
-mkdir -p "$OUT/res" "$OUT/gen" "$OUT/obj" "$OUT/classes" "$OUT/dex"
+mkdir -p "$OUT/res" "$OUT/gen" "$OUT/classes" "$OUT/dex"
 
 "$AAPT2" compile --dir "$PROJECT_DIR/res" -o "$OUT/res/resources.zip"
 "$AAPT2" link \
@@ -45,13 +39,12 @@ javac -source 8 -target 8 -encoding UTF-8 \
     -d "$OUT/classes" \
     @"$OUT/sources.txt"
 
-"$D8" --min-api 24 --output "$OUT/dex" "$OUT/classes"/*.class "$OUT/classes"/com/aelshahat/homeorganizer/*.class 2>/dev/null || \
-"$D8" --min-api 24 --output "$OUT/dex" $(find "$OUT/classes" -name '*.class')
+find "$OUT/classes" -name '*.class' -print0 | xargs -0 "$D8" --min-api 24 --output "$OUT/dex"
 
-cp "$OUT/base.apk" "$OUT/unsigned-aligned.apk"
-(cd "$OUT" && zip -q -j unsigned-aligned.apk dex/classes.dex)
+cp "$OUT/base.apk" "$OUT/unsigned.apk"
+(cd "$OUT" && zip -q -j unsigned.apk dex/classes.dex)
 
-"$ZIPALIGN" -f 4 "$OUT/unsigned-aligned.apk" "$OUT/AIHomeOrganizer-unsigned.apk"
+"$ZIPALIGN" -f 4 "$OUT/unsigned.apk" "$OUT/AIHomeOrganizer-unsigned.apk"
 
 KEYSTORE="$OUT/debug.keystore"
 if [ ! -f "$KEYSTORE" ]; then

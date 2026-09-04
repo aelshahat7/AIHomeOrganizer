@@ -14,16 +14,12 @@ public interface LauncherAdapter {
     List<HomeShortcut> findShortcuts(AccessibilityNodeInfo root, String launcherPackage);
 
     static LauncherAdapter forPackage(String packageName) {
-        if (packageName != null && packageName.contains("launcher3")) {
-            return new Launcher3Adapter();
-        }
+        if (packageName != null && packageName.contains("launcher3")) return new Launcher3Adapter();
         return new GenericLauncherAdapter();
     }
 
     final class Launcher3Adapter implements LauncherAdapter {
-        @Override public boolean supports(String packageName) {
-            return packageName != null && packageName.contains("launcher3");
-        }
+        @Override public boolean supports(String packageName) { return packageName != null && packageName.contains("launcher3"); }
         @Override public String name() { return "Launcher3-compatible"; }
         @Override public List<HomeShortcut> findShortcuts(AccessibilityNodeInfo root, String launcherPackage) {
             return ShortcutScanner.scan(root, launcherPackage, true);
@@ -58,7 +54,7 @@ public interface LauncherAdapter {
             node.getBoundsInScreen(bounds);
             String cls = String.valueOf(node.getClassName());
             String id = node.getViewIdResourceName();
-
+            boolean visible = node.isVisibleToUser();
             boolean hasLabel = !label.trim().isEmpty();
             boolean validBounds = bounds.width() > 0 && bounds.height() > 0
                     && bounds.width() <= 500 && bounds.height() <= 500;
@@ -69,7 +65,7 @@ public interface LauncherAdapter {
 
             float confidence = 0f;
             if (hasLabel) confidence += .20f;
-            if (node.isVisibleToUser()) confidence += .15f;
+            if (visible) confidence += .15f;
             if (validBounds) confidence += .15f;
             if (clickable) confidence += .20f;
             if (longClickable) confidence += .20f;
@@ -77,26 +73,23 @@ public interface LauncherAdapter {
             if (launcher3 && longClickable && textView) confidence += .10f;
             if (launcherUiNoise) confidence -= .55f;
 
-            // Launcher3 on the target device exposes home app icons as long-clickable
-            // TextViews. Generic launchers use a more conservative clickable/label rule.
-            boolean likely = hasLabel && validBounds && node.isVisibleToUser()
-                    && !launcherUiNoise
+            boolean likely = hasLabel && validBounds && visible && !launcherUiNoise
                     && ((launcher3 && longClickable && textView)
                     || (!launcher3 && (longClickable || clickable) && textView));
 
             if (likely && confidence >= .70f) {
-                String component = extractComponent(node);
-                HomeShortcut shortcut = new HomeShortcut(
-                        clean(label), launcherPackage, component, cls, id, bounds,
-                        clickable, longClickable, node.isVisibleToUser(), Math.min(1f, confidence));
+                String reason = "label+visible+bounds+" + (clickable ? "clickable+" : "")
+                        + (longClickable ? "longClickable+" : "") + "TextView";
+                if (launcher3) reason += "+Launcher3-long-click pattern";
+                HomeShortcut shortcut = new HomeShortcut(clean(label), launcherPackage,
+                        extractComponent(node), cls, id, bounds, clickable, longClickable,
+                        visible, Math.min(1f, confidence), reason);
                 String key = shortcut.identityKey();
                 HomeShortcut old = unique.get(key);
                 if (old == null || shortcut.confidence > old.confidence) unique.put(key, shortcut);
             }
 
-            for (int i = 0; i < node.getChildCount(); i++) {
-                visit(node.getChild(i), launcherPackage, launcher3, unique);
-            }
+            for (int i = 0; i < node.getChildCount(); i++) visit(node.getChild(i), launcherPackage, launcher3, unique);
         }
 
         private static boolean isLauncherUiNoise(String label, String id, String cls) {
@@ -104,14 +97,14 @@ public interface LauncherAdapter {
             String c = cls.toLowerCase(java.util.Locale.US);
             String[] noise = {"search", "weather", "clock", "date", "calendar", "settings",
                     "quick_event", "quick_event_title", "quick_event_weather_temp", "page",
-                    "hotseat", "all_apps", "dock", "navigation", "overview", "home"};
+                    "hotseat", "all_apps", "dock", "navigation", "overview"};
             for (String n : noise) if (s.contains(n)) return true;
             return c.contains("searchview") || c.contains("edittext");
         }
 
         private static String extractComponent(AccessibilityNodeInfo node) {
             // AccessibilityNodeInfo does not expose the launch Intent component directly.
-            // Keep the field nullable rather than inventing a component from coordinates.
+            // Keep this nullable rather than inventing a component from coordinates.
             return null;
         }
 

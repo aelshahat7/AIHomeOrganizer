@@ -36,14 +36,16 @@ public final class OrganizationExecutor {
         });
     }
     private void addRemaining(Group g,OrganizationPlan.Item seed,OrganizationPlan.Item anchor,int pos,Report r,Runnable done){
-        if(pos>=g.items.size()){done.run();return;} OrganizationPlan.Item item=g.items.get(pos++);
-        if(item==seed||item==anchor){addRemaining(g,seed,anchor,pos,r,done);return;}
-        if(item.shortcut.pageIndex!=anchor.shortcut.pageIndex){r.skipped++;r.entries.add(new Entry(g.category,item.shortcut.label,anchor.shortcut.label,"SKIPPED","Different page; cross-page drag into an existing folder is not attempted safely"));addRemaining(g,seed,anchor,pos,r,done);return;}
+        if(pos>=g.items.size()){done.run();return;}
+        OrganizationPlan.Item item=g.items.get(pos);
+        final int nextPos=pos+1;
+        if(item==seed||item==anchor){addRemaining(g,seed,anchor,nextPos,r,done);return;}
+        if(item.shortcut.pageIndex!=anchor.shortcut.pageIndex){r.skipped++;r.entries.add(new Entry(g.category,item.shortcut.label,anchor.shortcut.label,"SKIPPED","Different page; cross-page drag into an existing folder is not attempted safely"));addRemaining(g,seed,anchor,nextPos,r,done);return;}
         reuse.add(item.shortcut,anchor.shortcut.pageIndex,anchor.shortcut.centerX,anchor.shortcut.centerY,(result,detail)->{
             String st="FOLDER_ITEM_ADDED".equals(result)?"SUCCESS":("FOLDER_ITEM_UNVERIFIED".equals(result)?"UNVERIFIED":"FAILED");
             count(r,st);
             r.entries.add(new Entry(g.category,item.shortcut.label,anchor.shortcut.label,st,detail));
-            if("SUCCESS".equals(st))addRemaining(g,seed,anchor,pos,r,done);else done.run();
+            if("SUCCESS".equals(st))addRemaining(g,seed,anchor,nextPos,r,done);else done.run();
         });
     }
     private void count(Report r,String s){if("SUCCESS".equals(s))r.success++;else if("UNVERIFIED".equals(s))r.unverified++;else r.failed++;}

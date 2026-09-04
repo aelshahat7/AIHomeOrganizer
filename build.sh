@@ -7,11 +7,10 @@ PLATFORM="${ANDROID_HOME}/platforms/android-35"
 BUILD_TOOLS="${ANDROID_HOME}/build-tools/37.0.0"
 AAPT2="${AAPT2:-$(command -v aapt2 || true)}"
 D8="${D8:-$(command -v d8 || true)}"
-APKSIGNER="${APKSIGNER:-${BUILD_TOOLS}/apksigner}"
-ZIPALIGN="${ZIPALIGN:-${BUILD_TOOLS}/zipalign}"
+APKSIGNER="${APKSIGNER:-$(command -v apksigner || true)}"
 ANDROID_JAR="${PLATFORM}/android.jar"
 
-for tool in "$AAPT2" "$D8" "$APKSIGNER" "$ZIPALIGN" "$ANDROID_JAR"; do
+for tool in "$AAPT2" "$D8" "$APKSIGNER" "$ANDROID_JAR"; do
     if [ ! -e "$tool" ] || { [ ! -x "$tool" ] && [[ "$tool" != *.jar ]]; }; then
         echo "Missing required build component: $tool"
         exit 1
@@ -44,7 +43,10 @@ find "$OUT/classes" -name '*.class' -print0 | xargs -0 "$D8" --min-api 24 --outp
 cp "$OUT/base.apk" "$OUT/unsigned.apk"
 (cd "$OUT" && zip -q -j unsigned.apk dex/classes.dex)
 
-"$ZIPALIGN" -f 4 "$OUT/unsigned.apk" "$OUT/AIHomeOrganizer-unsigned.apk"
+# zipalign is an optimization step, not required for a debug APK to install.
+# The Android SDK zipalign binary is x86_64 on this Termux aarch64 setup,
+# so we intentionally skip it and sign the APK directly.
+cp "$OUT/unsigned.apk" "$OUT/AIHomeOrganizer.apk"
 
 KEYSTORE="$OUT/debug.keystore"
 if [ ! -f "$KEYSTORE" ]; then
@@ -57,7 +59,6 @@ if [ ! -f "$KEYSTORE" ]; then
         -dname "CN=Android Debug,O=Android,C=US" >/dev/null 2>&1
 fi
 
-cp "$OUT/AIHomeOrganizer-unsigned.apk" "$OUT/AIHomeOrganizer.apk"
 "$APKSIGNER" sign \
     --ks "$KEYSTORE" \
     --ks-pass pass:android \

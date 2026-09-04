@@ -26,12 +26,17 @@ OUT="$PROJECT_DIR/build"
 rm -rf "$OUT"
 mkdir -p "$OUT/res" "$OUT/gen" "$OUT/classes" "$OUT/dex"
 
-"$AAPT2" compile --dir "$PROJECT_DIR/res" -o "$OUT/res/resources.zip"
+# Keep -o before the other options. Some native Termux aapt2 builds use a
+# stricter argument parser than the SDK aapt2 binary.
+"$AAPT2" compile \
+    -o "$OUT/res/resources.zip" \
+    --dir "$PROJECT_DIR/res"
+
 "$AAPT2" link \
+    -o "$OUT/base.apk" \
     -I "$ANDROID_JAR" \
     --manifest "$PROJECT_DIR/AndroidManifest.xml" \
     --java "$OUT/gen" \
-    -o "$OUT/base.apk" \
     "$OUT/res/resources.zip"
 
 find "$PROJECT_DIR/src" -name '*.java' -print > "$OUT/sources.txt"

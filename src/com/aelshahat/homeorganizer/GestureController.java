@@ -41,42 +41,39 @@ public final class GestureController {
     }
 
     /**
-     * Launcher3 folder gesture: keep the same pointer down for a real long-press,
-     * then continue that exact stroke into the target. API 26+ supports continued
-     * strokes and Android 16 is API 36 on the target device.
+     * Launcher3 folder gesture using ONE continuous pointer stroke.
+     * The path stays at the source long enough to cross the long-press threshold,
+     * then moves directly to the target without continueStroke/multiple strokes.
+     * This is still an Accessibility gesture, because an external app cannot call
+     * Launcher3's private Workspace drag APIs directly without modifying/rooting the launcher.
      */
     public void dragAfterLongPress(int x1, int y1, int x2, int y2, long holdAndMoveDuration, Callback cb) {
         if (running) { cb.onFailure("GESTURE_BUSY"); return; }
         if (!canPerformGesture()) { cb.onFailure("GESTURE_CAPABILITY_UNAVAILABLE"); return; }
-        long hold = Math.max(700, Math.min(1000, holdAndMoveDuration <= 0 ? 850 : holdAndMoveDuration));
-        long move = Math.max(700, Math.min(1000, holdAndMoveDuration <= 0 ? 850 : holdAndMoveDuration));
+        long hold = Math.max(750, Math.min(1200, holdAndMoveDuration <= 0 ? 900 : holdAndMoveDuration));
+        long move = Math.max(650, Math.min(1800, holdAndMoveDuration <= 0 ? 900 : holdAndMoveDuration));
 
-        Path holdPath = new Path();
-        holdPath.moveTo(x1, y1);
-        holdPath.lineTo(x1, y1);
-        GestureDescription.StrokeDescription first =
-                new GestureDescription.StrokeDescription(holdPath, 0, hold, true);
+        Path path = new Path();
+        path.moveTo(x1, y1);
+        // Same-coordinate segment keeps the pointer down while the long-press threshold elapses.
+        path.lineTo(x1, y1);
+        // The next segment is the actual drag, with no stroke boundary/pointer reset.
+        path.lineTo(x2, y2);
 
-        Path movePath = new Path();
-        movePath.moveTo(x1, y1);
-        movePath.lineTo(x2, y2);
-        GestureDescription.StrokeDescription second =
-                first.continueStroke(movePath, 0, move, false);
-
-        GestureDescription gesture = new GestureDescription.Builder()
-                .addStroke(first)
-                .addStroke(second)
-                .build();
+        long total = hold + move;
         running = true;
-        appendGestureDiagnostic("GESTURE_FOLDER_DISPATCH holdMs=" + hold + " moveMs=" + move
+        appendGestureDiagnostic("GESTURE_FOLDER_SINGLE_STROKE holdMs=" + hold + " moveMs=" + move
                 + " from=" + x1 + "," + y1 + " to=" + x2 + "," + y2 + "\n");
         try {
+            GestureDescription gesture = new GestureDescription.Builder()
+                    .addStroke(new GestureDescription.StrokeDescription(path, 0, total))
+                    .build();
             boolean ok = service.dispatchGesture(gesture, new AccessibilityService.GestureResultCallback() {
                 @Override public void onCompleted(GestureDescription d) { finish(cb, true, ""); }
                 @Override public void onCancelled(GestureDescription d) { finish(cb, false, "GESTURE_CANCELLED"); }
             }, handler);
             if (!ok) finish(cb, false, "GESTURE_DISPATCH_REJECTED");
-            else handler.postDelayed(() -> { if (running) finish(cb, false, "GESTURE_TIMEOUT"); }, hold + move + 1800);
+            else handler.postDelayed(() -> { if (running) finish(cb, false, "GESTURE_TIMEOUT"); }, total + 1800);
         } catch (RuntimeException e) {
             finish(cb, false, "GESTURE_ERROR_" + e.getClass().getSimpleName());
         }

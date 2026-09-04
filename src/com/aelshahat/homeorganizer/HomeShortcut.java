@@ -15,17 +15,13 @@ public final class HomeShortcut {
     public final boolean longClickable;
     public final boolean visibleToUser;
     public final float confidence;
+    public final String classificationReason;
 
-    public HomeShortcut(String label,
-                        String packageName,
-                        String componentName,
-                        String className,
-                        String viewId,
-                        Rect bounds,
-                        boolean clickable,
-                        boolean longClickable,
-                        boolean visibleToUser,
-                        float confidence) {
+    public HomeShortcut(String label, String packageName, String componentName,
+                        String className, String viewId, Rect bounds,
+                        boolean clickable, boolean longClickable,
+                        boolean visibleToUser, float confidence,
+                        String classificationReason) {
         this.label = label == null ? "" : label;
         this.packageName = packageName;
         this.componentName = componentName;
@@ -38,20 +34,17 @@ public final class HomeShortcut {
         this.longClickable = longClickable;
         this.visibleToUser = visibleToUser;
         this.confidence = confidence;
+        this.classificationReason = classificationReason == null ? "" : classificationReason;
     }
 
     public String identityKey() {
-        if (componentName != null && !componentName.isEmpty()) {
-            return "component:" + componentName;
-        }
-        if (viewId != null && !viewId.isEmpty()) {
-            return "viewId:" + viewId + "|label:" + label;
-        }
+        if (componentName != null && !componentName.isEmpty()) return "component:" + componentName;
+        if (viewId != null && !viewId.isEmpty()) return "viewId:" + viewId + "|label:" + label;
         return "label:" + label + "|center:" + centerX + "," + centerY;
     }
 
     public String describe() {
-        return "label=\"" + clean(label) + \"\""
+        return "label=\"" + clean(label) + "\""
                 + " | package=" + String.valueOf(packageName)
                 + " | component=" + String.valueOf(componentName)
                 + " | class=" + className
@@ -59,10 +52,10 @@ public final class HomeShortcut {
                 + " | clickable=" + clickable
                 + " | longClickable=" + longClickable
                 + " | visible=" + visibleToUser
-                + " | bounds=" + bounds.left + "," + bounds.top + ","
-                + bounds.right + "," + bounds.bottom
+                + " | bounds=" + bounds.left + "," + bounds.top + "," + bounds.right + "," + bounds.bottom
                 + " | center=" + centerX + "," + centerY
-                + " | confidence=" + String.format(java.util.Locale.US, "%.2f", confidence);
+                + " | confidence=" + String.format(java.util.Locale.US, "%.2f", confidence)
+                + " | reason=" + classificationReason;
     }
 
     private String clean(String value) {

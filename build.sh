@@ -4,10 +4,12 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ANDROID_HOME="${ANDROID_HOME:-$HOME/lib/android-sdk-9123335}"
 PLATFORM="${ANDROID_HOME}/platforms/android-35"
-BUILD_TOOLS="${ANDROID_HOME}/build-tools/37.0.0"
-AAPT2="${AAPT2:-$(command -v aapt2 || true)}"
-D8="${D8:-$(command -v d8 || true)}"
-APKSIGNER="${APKSIGNER:-$(command -v apksigner || true)}"
+
+# On Termux aarch64, prefer the native Termux build tools. Android SDK
+# command-line binaries such as aapt2 may be x86_64 and cannot execute here.
+AAPT2="${AAPT2:-$PREFIX/bin/aapt2}"
+D8="${D8:-$PREFIX/bin/d8}"
+APKSIGNER="${APKSIGNER:-$PREFIX/bin/apksigner}"
 ANDROID_JAR="${PLATFORM}/android.jar"
 
 for tool in "$AAPT2" "$D8" "$APKSIGNER" "$ANDROID_JAR"; do
@@ -43,9 +45,8 @@ find "$OUT/classes" -name '*.class' -print0 | xargs -0 "$D8" --min-api 24 --outp
 cp "$OUT/base.apk" "$OUT/unsigned.apk"
 (cd "$OUT" && zip -q -j unsigned.apk dex/classes.dex)
 
-# zipalign is an optimization step, not required for a debug APK to install.
-# The Android SDK zipalign binary is x86_64 on this Termux aarch64 setup,
-# so we intentionally skip it and sign the APK directly.
+# zipalign is optional for this debug APK. The SDK copy is x86_64 on
+# this aarch64 Termux environment, so we intentionally skip it.
 cp "$OUT/unsigned.apk" "$OUT/AIHomeOrganizer.apk"
 
 KEYSTORE="$OUT/debug.keystore"

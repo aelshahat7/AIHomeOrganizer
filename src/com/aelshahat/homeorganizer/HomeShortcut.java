@@ -16,12 +16,25 @@ public final class HomeShortcut {
     public final boolean visibleToUser;
     public final float confidence;
     public final String classificationReason;
+    public final int pageIndex;
+    public final boolean hotseat;
 
     public HomeShortcut(String label, String packageName, String componentName,
                         String className, String viewId, Rect bounds,
                         boolean clickable, boolean longClickable,
                         boolean visibleToUser, float confidence,
                         String classificationReason) {
+        this(label, packageName, componentName, className, viewId, bounds,
+                clickable, longClickable, visibleToUser, confidence,
+                classificationReason, -1, false);
+    }
+
+    public HomeShortcut(String label, String packageName, String componentName,
+                        String className, String viewId, Rect bounds,
+                        boolean clickable, boolean longClickable,
+                        boolean visibleToUser, float confidence,
+                        String classificationReason, int pageIndex,
+                        boolean hotseat) {
         this.label = label == null ? "" : label;
         this.packageName = packageName;
         this.componentName = componentName;
@@ -35,12 +48,26 @@ public final class HomeShortcut {
         this.visibleToUser = visibleToUser;
         this.confidence = confidence;
         this.classificationReason = classificationReason == null ? "" : classificationReason;
+        this.pageIndex = pageIndex;
+        this.hotseat = hotseat;
+    }
+
+    public HomeShortcut withPage(int page, boolean isHotseat) {
+        return new HomeShortcut(label, packageName, componentName, className, viewId,
+                bounds, clickable, longClickable, visibleToUser, confidence,
+                classificationReason, page, isHotseat);
     }
 
     public String identityKey() {
-        if (componentName != null && !componentName.isEmpty()) return "component:" + componentName;
-        if (viewId != null && !viewId.isEmpty()) return "viewId:" + viewId + "|label:" + label;
-        return "label:" + label + "|center:" + centerX + "," + centerY;
+        String base;
+        if (componentName != null && !componentName.isEmpty()) {
+            base = "component:" + componentName;
+        } else if (viewId != null && !viewId.isEmpty()) {
+            base = "viewId:" + viewId + "|label:" + label;
+        } else {
+            base = "label:" + label + "|center:" + centerX + "," + centerY;
+        }
+        return base + "|page:" + pageIndex + "|hotseat:" + hotseat;
     }
 
     public String describe() {
@@ -49,6 +76,8 @@ public final class HomeShortcut {
                 + " | component=" + String.valueOf(componentName)
                 + " | class=" + className
                 + " | id=" + String.valueOf(viewId)
+                + " | page=" + (pageIndex < 0 ? "?" : pageIndex)
+                + " | hotseat=" + hotseat
                 + " | clickable=" + clickable
                 + " | longClickable=" + longClickable
                 + " | visible=" + visibleToUser

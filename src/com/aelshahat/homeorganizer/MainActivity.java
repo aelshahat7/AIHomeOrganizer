@@ -26,7 +26,7 @@ import java.util.Map;
 public class MainActivity extends Activity {
     private TextView status, launcher, summary, report, planView;
     private Spinner shortcutPicker;
-    private Button safeDrag, classify, approve, execute, copyReport;
+    private Button safeDrag, safeFolderProbe, classify, approve, execute, copyReport;
     private List<HomeShortcut> shortcuts = new ArrayList<>();
     private List<ClassificationResult> classifications = new ArrayList<>();
     private OrganizationPlan plan;
@@ -51,12 +51,13 @@ public class MainActivity extends Activity {
             @Override public void onNothingSelected(android.widget.AdapterView<?> p) { selectedShortcut = null; updateButtons(); }
         });
         safeDrag = new Button(this); safeDrag.setText("SAFE DRAG PROBE"); safeDrag.setEnabled(false); safeDrag.setOnClickListener(v -> confirmSafeDrag()); root.addView(safeDrag, lp());
+        safeFolderProbe = new Button(this); safeFolderProbe.setText("SAFE FOLDER PROBE: Facebook + Instagram"); safeFolderProbe.setEnabled(false); safeFolderProbe.setOnClickListener(v -> confirmFolderProbe()); root.addView(safeFolderProbe, lp());
         classify = new Button(this); classify.setText("CLASSIFY ON-DEVICE"); classify.setEnabled(false); classify.setOnClickListener(v -> buildPlan()); root.addView(classify, lp());
 
         TextView planTitle = new TextView(this); planTitle.setText("Proposed Plan"); planTitle.setTextSize(16); root.addView(planTitle, lp());
         ScrollView planScroll = new ScrollView(this); planView = new TextView(this); planView.setTextSize(14); planView.setPadding(0, 8, 0, 8); planScroll.addView(planView, new ViewGroup.LayoutParams(-1, -2)); root.addView(planScroll, new LinearLayout.LayoutParams(-1, 0, 0.9f));
-        approve = new Button(this); approve.setText("APPROVE PLAN"); approve.setEnabled(false); approve.setOnClickListener(v -> { approved = true; if (plan != null) plan.setApproved(true); append("USER_APPROVED\n"); status.setText("Plan approved. Execute is now enabled."); updateButtons(); }); root.addView(approve, lp());
-        execute = new Button(this); execute.setText("EXECUTE APPROVED PLAN"); execute.setEnabled(false); execute.setOnClickListener(v -> confirmExecute()); root.addView(execute, lp());
+        approve = new Button(this); approve.setText("APPROVE PLAN"); approve.setEnabled(false); approve.setOnClickListener(v -> { approved = true; if (plan != null) plan.setApproved(true); append("USER_APPROVED\n"); status.setText("Plan approved. Phase 2 execution remains locked."); updateButtons(); }); root.addView(approve, lp());
+        execute = new Button(this); execute.setText("EXECUTE APPROVED PLAN (PHASE 2 LOCKED)"); execute.setEnabled(false); root.addView(execute, lp());
 
         LinearLayout reportBar = new LinearLayout(this); reportBar.setOrientation(LinearLayout.HORIZONTAL);
         TextView reportTitle = new TextView(this); reportTitle.setText("Diagnostic Report"); reportTitle.setTextSize(16); reportBar.addView(reportTitle, new LinearLayout.LayoutParams(0, -2, 1));
@@ -71,9 +72,9 @@ public class MainActivity extends Activity {
     private void startScan() {
         HomeAccessibilityService s = HomeAccessibilityService.getInstance();
         if (s == null) { status.setText("Service OFF. Enable Accessibility first."); return; }
-        approved = false; plan = null; classifications.clear(); classify.setEnabled(false); approve.setEnabled(false); execute.setEnabled(false);
+        approved = false; plan = null; classifications.clear(); classify.setEnabled(false); approve.setEnabled(false); execute.setEnabled(false); safeFolderProbe.setEnabled(false);
         status.setText("Scanning every Home Screen page...");
-        s.scanHomeScreen(code -> runOnUiThread(() -> { refresh(); status.setText(code + " | review pages and shortcuts"); classify.setEnabled(code.equals("MULTI_PAGE_SCAN_COMPLETE") || code.equals("PAGE_LIMIT_REACHED")); }));
+        s.scanHomeScreen(code -> runOnUiThread(() -> { refresh(); status.setText(code + " | review pages and shortcuts"); classify.setEnabled(code.equals("MULTI_PAGE_SCAN_COMPLETE") || code.equals("PAGE_LIMIT_REACHED")); safeFolderProbe.setEnabled(hasFacebookAndInstagram()); }));
     }
 
     private void confirmSafeDrag() {
@@ -88,12 +89,58 @@ public class MainActivity extends Activity {
         s.runSafeDragTest(selectedShortcut, result -> runOnUiThread(() -> { status.setText(result); refresh(); updateButtons(); }));
     }
 
+    private void confirmFolderProbe() {
+        if (!hasFacebookAndInstagram()) { status.setText("Facebook + Instagram were not both found in the latest scan."); return; }
+        new AlertDialog.Builder(this).setTitle("Launcher3 Folder Probe")
+                .setMessage("This is PHASE 1 only. The app will reset Home, locate Facebook + Instagram, perform exactly ONE folder gesture, and verify the resulting Launcher3 state. No other apps or categories will be touched. Continue?")
+                .setNegativeButton("Cancel", null).setPositiveButton("Run Probe", (d,w) -> runFolderProbe()).show();
+    }
+
+    private void runFolderProbe() {
+        HomeAccessibilityService s = HomeAccessibilityService.getInstance(); if (s == null) return;
+        HomeShortcut facebook = findByLabel("Facebook");
+        HomeShortcut instagram = findByLabel("Instagram");
+        if (facebook == null || instagram == null) { status.setText("Facebook + Instagram not found."); return; }
+        safeFolderProbe.setEnabled(false); execute.setEnabled(false); status.setText("Running Launcher3 Facebook + Instagram folder probe...");
+        s.createFolder(facebook, instagram, (code, detail) -> runOnUiThread(() -> {
+            append("FOLDER_PROBE_RESULT code=" + code + " detail=" + detail + "\n");
+            status.setText(code + " | " + detail);
+            refresh();
+            safeFolderProbe.setEnabled("FOLDER_CREATED".equals(code) ? false : hasFacebookAndInstagram());
+        }));
+    }
+
+    private boolean hasFacebookAndInstagram() { return findByLabel("Facebook") != null && findByLabel("Instagram") != null; }
+    private HomeShortcut findByLabel(String wanted) {
+        for (HomeShortcut s : shortcuts) if (s.label.equalsIgnoreCase(wanted) && !s.hotseat) return s;
+        return null;
+    }
+
     private void buildPlan() {
         HomeAccessibilityService s = HomeAccessibilityService.getInstance(); if (s == null || shortcuts.isEmpty()) return;
         classifications = new ClassificationEngine(this).classify(shortcuts); plan = new OrganizationPlan();
         for (ClassificationResult r : classifications) plan.add(new OrganizationPlan.Item(r.shortcut, r.category, r.confidence, r.reason));
-        approved = false; renderPlan(); approve.setEnabled(true); execute.setEnabled(false); append("CLASSIFICATION_COMPLETE\nPLAN_READY\n"); status.setText("Plan ready. Apps were resolved against the current device's launchable applications. Nothing has been changed on Home Screen.");
+        approved = false; renderPlan(); approve.setEnabled(true); execute.setEnabled(false);
+        append("CLASSIFICATION_COMPLETE\n");
+        appendClassificationDiagnostics();
+        append("PLAN_READY\n");
+        status.setText("Plan ready. Phase 2 execution is locked; use SAFE FOLDER PROBE for Facebook + Instagram only.");
     }
+
+    private void appendClassificationDiagnostics() {
+        append("CLASSIFICATION_RESULTS_BEGIN count=" + classifications.size() + "\n");
+        for (ClassificationResult r : classifications) {
+            append("CLASSIFICATION_RESULT label=" + safe(r.shortcut.label)
+                    + " category=" + safe(r.category)
+                    + " confidence=" + String.format(java.util.Locale.US, "%.2f", r.confidence)
+                    + " resolvedPackage=" + safe(r.resolvedPackage)
+                    + " resolution=" + (r.resolutionUnique ? "unique" : (r.resolvedPackage.isEmpty() ? "unresolved" : "ambiguous"))
+                    + " reason=" + safe(r.reason) + "\n");
+        }
+        append("CLASSIFICATION_RESULTS_END\n");
+    }
+
+    private String safe(String s) { return s == null ? "" : s.replace('\n', ' ').replace('\r', ' '); }
 
     private void renderPlan() {
         if (plan == null) { planView.setText("No plan yet."); return; }
@@ -105,38 +152,6 @@ public class MainActivity extends Activity {
             for (OrganizationPlan.Item i : e.getValue()) b.append("  - ").append(i.shortcut.label).append(" | page=").append(i.shortcut.pageIndex).append(" | confidence ").append(String.format(java.util.Locale.US,"%.2f",i.confidence)).append("\n");
         }
         planView.setText(b.toString());
-    }
-
-    private void confirmExecute() {
-        if (!approved || plan == null) return;
-        new AlertDialog.Builder(this).setTitle("Execute Home Screen changes?")
-                .setMessage("The app will first return to the Home Screen, then execute approved folder operations one at a time and STOP on the first verification failure. This may modify your Home Screen. Continue?")
-                .setNegativeButton("Cancel", null).setPositiveButton("Execute", (d,w) -> executePlan()).show();
-    }
-
-    private void executePlan() {
-        HomeAccessibilityService s = HomeAccessibilityService.getInstance(); if (s == null) return;
-        execute.setEnabled(false); append("EXECUTION_STARTED\n"); status.setText("Returning to Home Screen, then executing one verified operation at a time...");
-        executeNextCategory(s, new ArrayList<>(groupCategories()), 0);
-    }
-
-    private List<List<OrganizationPlan.Item>> groupCategories() {
-        Map<String,List<OrganizationPlan.Item>> groups = new LinkedHashMap<>();
-        if (plan != null) for (OrganizationPlan.Item i : plan.getItems()) if (!i.shortcut.hotseat && !"Needs Review".equals(i.category)) groups.computeIfAbsent(i.category,k -> new ArrayList<>()).add(i);
-        return new ArrayList<>(groups.values());
-    }
-
-    private void executeNextCategory(HomeAccessibilityService s, List<List<OrganizationPlan.Item>> groups, int index) {
-        if (index >= groups.size()) { append("ORGANIZATION_COMPLETE\n"); status.setText("ORGANIZATION_COMPLETE"); return; }
-        List<OrganizationPlan.Item> items = groups.get(index);
-        if (items.size() < 2) { executeNextCategory(s, groups, index + 1); return; }
-        OrganizationPlan.Item a = items.get(0), b = items.get(1);
-        append("FOLDER_OPERATION category=" + a.category + " source=" + a.shortcut.label + " target=" + b.shortcut.label + " page=" + a.shortcut.pageIndex + "\n");
-        s.createFolder(a.shortcut, b.shortcut, (code, detail) -> runOnUiThread(() -> {
-            append(code + " detail=" + detail + "\n");
-            if (!"FOLDER_CREATED".equals(code)) { append("ORGANIZATION_STOPPED_AFTER_FAILURE\n"); status.setText("ORGANIZATION_STOPPED_AFTER_FAILURE: " + code); return; }
-            status.setText("Verified folder operation. Continuing..."); executeNextCategory(s, groups, index + 1);
-        }));
     }
 
     private void copyReport() {
@@ -155,8 +170,7 @@ public class MainActivity extends Activity {
         if (labels.isEmpty()) labels.add("No regular shortcuts detected yet"); shortcutPicker.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, labels));
         if (!shortcuts.isEmpty()) { selectedShortcut = shortcuts.get(0); shortcutPicker.setSelection(0); } else selectedShortcut = null; updating = false;
         int pages = s == null ? 0 : s.getPages().size(); summary.setText("Pages detected: " + pages + "\nRegular shortcuts: " + shortcuts.size() + "\nHotseat instances: " + hotseatCount);
-        report.setText(s == null ? "Service OFF" : s.getSavedReport()); if (plan != null) renderPlan(); updateButtons();
-        if (copyReport != null) copyReport.setEnabled(report.length() > 0);
+        report.setText(s == null ? "Service OFF" : s.getSavedReport()); if (plan != null) renderPlan(); if (copyReport != null) copyReport.setEnabled(report.length() > 0); updateButtons();
         if (status.getText() == null || status.getText().toString().isEmpty()) status.setText(s == null ? "Service OFF" : "Service ON");
     }
 
@@ -164,8 +178,9 @@ public class MainActivity extends Activity {
         HomeAccessibilityService s = HomeAccessibilityService.getInstance();
         safeDrag.setEnabled(selectedShortcut != null && s != null && s.canPerformGestureNow() && !s.isScanning());
         classify.setEnabled(!shortcuts.isEmpty() && s != null && !s.isScanning());
+        safeFolderProbe.setEnabled(hasFacebookAndInstagram() && s != null && s.canPerformGestureNow() && !s.isScanning());
         approve.setEnabled(plan != null && !approved);
-        execute.setEnabled(plan != null && approved);
+        execute.setEnabled(false);
     }
 
     private void append(String text) { HomeAccessibilityService s = HomeAccessibilityService.getInstance(); if (s != null) s.getSharedPreferences("diagnostic", MODE_PRIVATE).edit().putString("last_report", s.getSavedReport() + text).apply(); refresh(); }

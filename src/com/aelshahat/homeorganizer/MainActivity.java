@@ -51,7 +51,7 @@ public class MainActivity extends Activity {
             @Override public void onNothingSelected(android.widget.AdapterView<?> p) { selectedShortcut = null; updateButtons(); }
         });
         safeDrag = new Button(this); safeDrag.setText("SAFE DRAG PROBE"); safeDrag.setEnabled(false); safeDrag.setOnClickListener(v -> confirmSafeDrag()); root.addView(safeDrag, lp());
-        classify = new Button(this); classify.setText("CLASSIFY LOCALLY"); classify.setEnabled(false); classify.setOnClickListener(v -> buildPlan()); root.addView(classify, lp());
+        classify = new Button(this); classify.setText("CLASSIFY ON-DEVICE"); classify.setEnabled(false); classify.setOnClickListener(v -> buildPlan()); root.addView(classify, lp());
 
         TextView planTitle = new TextView(this); planTitle.setText("Proposed Plan"); planTitle.setTextSize(16); root.addView(planTitle, lp());
         ScrollView planScroll = new ScrollView(this); planView = new TextView(this); planView.setTextSize(14); planView.setPadding(0, 8, 0, 8); planScroll.addView(planView, new ViewGroup.LayoutParams(-1, -2)); root.addView(planScroll, new LinearLayout.LayoutParams(-1, 0, 0.9f));
@@ -90,9 +90,9 @@ public class MainActivity extends Activity {
 
     private void buildPlan() {
         HomeAccessibilityService s = HomeAccessibilityService.getInstance(); if (s == null || shortcuts.isEmpty()) return;
-        classifications = new ClassificationEngine().classify(shortcuts); plan = new OrganizationPlan();
+        classifications = new ClassificationEngine(this).classify(shortcuts); plan = new OrganizationPlan();
         for (ClassificationResult r : classifications) plan.add(new OrganizationPlan.Item(r.shortcut, r.category, r.confidence, r.reason));
-        approved = false; renderPlan(); approve.setEnabled(true); execute.setEnabled(false); append("CLASSIFICATION_COMPLETE\nPLAN_READY\n"); status.setText("Plan ready. Nothing has been changed on Home Screen.");
+        approved = false; renderPlan(); approve.setEnabled(true); execute.setEnabled(false); append("CLASSIFICATION_COMPLETE\nPLAN_READY\n"); status.setText("Plan ready. Apps were resolved against the current device's launchable applications. Nothing has been changed on Home Screen.");
     }
 
     private void renderPlan() {

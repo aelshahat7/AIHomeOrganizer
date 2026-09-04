@@ -2,6 +2,7 @@ package com.aelshahat.homeorganizer;
 
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.AccessibilityServiceInfo;
+import android.graphics.Rect;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
@@ -114,20 +115,14 @@ public class HomeAccessibilityService extends AccessibilityService {
 
     /** Always reset the launcher to its Home page before a page-targeted action. */
     private void ensureHome(final TestCallback callback) {
-        if (!performGlobalAction(GLOBAL_ACTION_HOME)) {
-            callback.onResult("TEST_FAILED_LAUNCHER_UNAVAILABLE");
-            return;
-        }
+        if (!performGlobalAction(GLOBAL_ACTION_HOME)) { callback.onResult("TEST_FAILED_LAUNCHER_UNAVAILABLE"); return; }
         currentPage = 0;
         handler.postDelayed(() -> {
             AccessibilityNodeInfo root = getRootInActiveWindow();
             if (root == null) { callback.onResult("TEST_FAILED_LAUNCHER_UNAVAILABLE"); return; }
             String pkg = String.valueOf(root.getPackageName());
             root.recycle();
-            if (!pkg.equals(lastLauncherPackage)) {
-                callback.onResult("TEST_FAILED_LAUNCHER_CHANGED");
-                return;
-            }
+            if (!pkg.equals(lastLauncherPackage)) { callback.onResult("TEST_FAILED_LAUNCHER_CHANGED"); return; }
             currentPage = 0;
             callback.onResult("HOME_READY");
         }, 800);
@@ -146,14 +141,10 @@ public class HomeAccessibilityService extends AccessibilityService {
         if (current == target) { currentPage = target; callback.onResult("PAGE_READY"); return; }
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root == null || !String.valueOf(root.getPackageName()).equals(lastLauncherPackage)) {
-            if (root != null) root.recycle();
-            callback.onResult("TEST_FAILED_LAUNCHER_CHANGED"); return;
+            if (root != null) root.recycle(); callback.onResult("TEST_FAILED_LAUNCHER_CHANGED"); return;
         }
         navigator.next(root, new PageNavigator.Callback() {
-            @Override public void onSuccess() {
-                currentPage = current + 1;
-                handler.postDelayed(() -> navigateStep(current + 1, target, callback), 700);
-            }
+            @Override public void onSuccess() { currentPage = current + 1; handler.postDelayed(() -> navigateStep(current + 1, target, callback), 700); }
             @Override public void onFailure(String reason) { callback.onResult("TEST_FAILED_PAGE_NAVIGATION: " + reason); }
         });
         root.recycle();
@@ -162,23 +153,21 @@ public class HomeAccessibilityService extends AccessibilityService {
     public void runSafeDragTest(final HomeShortcut selected, final TestCallback callback) {
         if (selected == null) { callback.onResult("TEST_FAILED_SHORTCUT_NOT_FOUND"); return; }
         if (!canPerformGestureNow()) { callback.onResult("TEST_FAILED_GESTURE_UNAVAILABLE"); return; }
-        navigateToPage(selected.pageIndex, new TestCallback() {
-            @Override public void onResult(String pageResult) {
-                if (!"PAGE_READY".equals(pageResult)) { callback.onResult(pageResult); return; }
-                AccessibilityNodeInfo root = getRootInActiveWindow();
-                if (root == null || !String.valueOf(root.getPackageName()).equals(lastLauncherPackage)) {
-                    if (root != null) root.recycle(); callback.onResult("TEST_FAILED_LAUNCHER_CHANGED"); return;
-                }
-                String pkg = String.valueOf(root.getPackageName());
-                List<HomeShortcut> current = LauncherAdapter.forPackage(pkg).findShortcuts(root, pkg, selected.pageIndex); root.recycle();
-                HomeShortcut live = homeController.findShortcut(current, selected);
-                if (live == null) { callback.onResult("TEST_FAILED_SHORTCUT_NOT_FOUND"); return; }
-                appendReport("GESTURE_STARTED safe-probe label=" + live.label + " page=" + live.pageIndex + "\n");
-                gestures.safeDrag(live.centerX, live.centerY, 45, 0, new GestureController.Callback() {
-                    @Override public void onSuccess() { appendReport("GESTURE_COMPLETED\n"); handler.postDelayed(() -> verifyAfterGesture(live, callback), 800); }
-                    @Override public void onFailure(String reason) { appendReport("GESTURE_FAILED reason=" + reason + "\n"); callback.onResult(reason.contains("CAPABILITY") ? "TEST_FAILED_GESTURE_UNAVAILABLE" : "TEST_FAILED_VERIFICATION"); }
-                });
+        navigateToPage(selected.pageIndex, pageResult -> {
+            if (!"PAGE_READY".equals(pageResult)) { callback.onResult(pageResult); return; }
+            AccessibilityNodeInfo root = getRootInActiveWindow();
+            if (root == null || !String.valueOf(root.getPackageName()).equals(lastLauncherPackage)) {
+                if (root != null) root.recycle(); callback.onResult("TEST_FAILED_LAUNCHER_CHANGED"); return;
             }
+            String pkg = String.valueOf(root.getPackageName());
+            List<HomeShortcut> current = LauncherAdapter.forPackage(pkg).findShortcuts(root, pkg, selected.pageIndex); root.recycle();
+            HomeShortcut live = homeController.findShortcut(current, selected);
+            if (live == null) { callback.onResult("TEST_FAILED_SHORTCUT_NOT_FOUND"); return; }
+            appendReport("GESTURE_STARTED safe-probe label=" + live.label + " page=" + live.pageIndex + "\n");
+            gestures.safeDrag(live.centerX, live.centerY, 45, 0, new GestureController.Callback() {
+                @Override public void onSuccess() { appendReport("GESTURE_COMPLETED\n"); handler.postDelayed(() -> verifyAfterGesture(live, callback), 800); }
+                @Override public void onFailure(String reason) { appendReport("GESTURE_FAILED reason=" + reason + "\n"); callback.onResult(reason.contains("CAPABILITY") ? "TEST_FAILED_GESTURE_UNAVAILABLE" : "TEST_FAILED_VERIFICATION"); }
+            });
         });
     }
 
@@ -191,16 +180,16 @@ public class HomeAccessibilityService extends AccessibilityService {
         HomeShortcut match = null; for (HomeShortcut s : after) if (s.label.equalsIgnoreCase(before.label) && s.hotseat == before.hotseat) { match = s; break; }
         String result = match == null ? "TEST_FAILED_VERIFICATION" : ((match.centerX != before.centerX || match.centerY != before.centerY) ? "TEST_SUCCESS_DRAG_DETECTED" : "TEST_SUCCESS_NO_MOVE");
         appendReport("VERIFICATION RESULT: " + result + "\nBefore: " + before.describe() + "\nAfter: " + (match == null ? "missing" : match.describe()) + "\n");
-        lastShortcuts = new ArrayList<>(); for(HomePage p:lastPages) for(HomeShortcut s:p.shortcuts) if(!s.hotseat) lastShortcuts.add(s);
         callback.onResult(result);
     }
 
-    public void performFolderGesture(int sx, int sy, int tx, int ty, GestureController.Callback cb) { gestures.dragAfterLongPress(sx, sy, tx, ty, 1100, cb); }
+    public void performFolderGesture(int sx, int sy, int tx, int ty, GestureController.Callback cb) { gestures.dragAfterLongPress(sx, sy, tx, ty, 850, cb); }
 
     public void createFolder(final HomeShortcut source, final HomeShortcut target, final FolderController.Callback cb) {
         if (source == null || target == null || source.hotseat || target.hotseat || source.pageIndex != target.pageIndex) {
             cb.onResult("FOLDER_CREATION_UNSUPPORTED", "Both shortcuts must be on the same normal scanned page"); return;
         }
+        appendReport("FOLDER_PROBE_START source=" + source.label + " target=" + target.label + " page=" + source.pageIndex + "\n");
         navigateToPage(source.pageIndex, result -> {
             if (!"PAGE_READY".equals(result)) cb.onResult(result, "Could not reach shortcut page");
             else folderController.createFolder(source, target, cb);
@@ -208,33 +197,145 @@ public class HomeAccessibilityService extends AccessibilityService {
     }
 
     public void verifyFolderProbe(HomeShortcut source, HomeShortcut target, FolderController.Callback callback) {
+        final int[] attempt = {0};
+        verifyFolderProbeAttempt(source, target, callback, attempt);
+    }
+
+    private void verifyFolderProbeAttempt(HomeShortcut source, HomeShortcut target, FolderController.Callback callback, int[] attempt) {
         handler.postDelayed(() -> {
             AccessibilityNodeInfo root = getRootInActiveWindow();
             if (root == null || !String.valueOf(root.getPackageName()).equals(lastLauncherPackage)) {
                 if (root != null) root.recycle(); callback.onResult("TEST_FAILED_VERIFICATION", "Launcher window not available after folder probe"); return;
             }
             String pkg = String.valueOf(root.getPackageName());
-            boolean folderLike = containsFolderNode(root);
             List<HomeShortcut> after = LauncherAdapter.forPackage(pkg).findShortcuts(root, pkg, source.pageIndex);
-            root.recycle();
             boolean sourceVisible = hasLabel(after, source.label);
             boolean targetVisible = hasLabel(after, target.label);
-            appendReport("FOLDER_VERIFY folderLike=" + folderLike + " sourceVisible=" + sourceVisible + " targetVisible=" + targetVisible + "\n");
-            if (folderLike && !sourceVisible && !targetVisible) callback.onResult("FOLDER_CREATED", "Folder-like launcher state detected; both shortcuts are now inside the folder");
-            else if (folderLike) callback.onResult("FOLDER_CREATED", "Folder-like launcher state detected");
-            else callback.onResult("FOLDER_CREATION_UNSUPPORTED", "Folder state could not be verified safely");
-        }, 1100);
+            String sourceNode = describeNearestNode(root, source);
+            String targetNode = describeNearestNode(root, target);
+            String tree = dumpRelevantTree(root, source, target);
+            boolean explicitFolder = containsFolderNode(root);
+            boolean pairDisappeared = !sourceVisible && !targetVisible;
+            boolean folderLike = explicitFolder || pairDisappeared;
+            String reason = explicitFolder ? "explicit folder-like node detected" : (pairDisappeared ? "both source and target disappeared from launcher shortcut scan" : "source/target remain visible and no folder marker was found");
+            appendReport("FOLDER_VERIFY_ATTEMPT=" + attempt[0] + " folderLike=" + folderLike
+                    + " explicitFolder=" + explicitFolder + " pairDisappeared=" + pairDisappeared
+                    + " sourceVisible=" + sourceVisible + " targetVisible=" + targetVisible + "\n");
+            appendReport("SOURCE_AFTER: " + sourceNode + "\nTARGET_AFTER: " + targetNode + "\n");
+            appendReport("FOLDER_DETECTION reason=" + reason + "\n");
+            appendReport("LAUNCHER3_TREE_AFTER_GESTURE\n" + tree);
+            root.recycle();
+
+            if (folderLike) {
+                callback.onResult("FOLDER_CREATED", "Verified Launcher3 folder-like state: " + reason);
+                return;
+            }
+            if (attempt[0] < 2) {
+                attempt[0]++;
+                verifyFolderProbeAttempt(source, target, callback, attempt);
+                return;
+            }
+            callback.onResult("FOLDER_CREATION_UNSUPPORTED", "No reliable Launcher3 folder state after 3 verification reads");
+        }, attempt[0] == 0 ? 1500 : 500);
     }
 
     private boolean containsFolderNode(AccessibilityNodeInfo n) {
         if (n == null) return false;
-        String c = String.valueOf(n.getClassName()).toLowerCase(java.util.Locale.US);
-        String d = String.valueOf(n.getContentDescription()).toLowerCase(java.util.Locale.US);
-        if (c.contains("folder") || d.contains("folder") || d.contains("foldericon")) return true;
-        for (int i = 0; i < n.getChildCount(); i++) if (containsFolderNode(n.getChild(i))) return true;
+        String c = lower(n.getClassName());
+        String d = lower(n.getContentDescription());
+        String t = lower(n.getText());
+        if (c.contains("folder") || d.contains("folder") || d.contains("foldericon") || t.contains("folder")) return true;
+        for (int i = 0; i < n.getChildCount(); i++) {
+            AccessibilityNodeInfo child = n.getChild(i);
+            boolean hit = containsFolderNode(child);
+            if (child != null) child.recycle();
+            if (hit) return true;
+        }
         return false;
     }
+
+    private String dumpRelevantTree(AccessibilityNodeInfo root, HomeShortcut source, HomeShortcut target) {
+        StringBuilder out = new StringBuilder();
+        dumpTree(root, source, target, out, 0, new int[]{0});
+        return out.toString();
+    }
+
+    private void dumpTree(AccessibilityNodeInfo n, HomeShortcut source, HomeShortcut target, StringBuilder out, int depth, int[] count) {
+        if (n == null || count[0] >= 220 || depth > 12) return;
+        Rect r = new Rect(); n.getBoundsInScreen(r);
+        boolean relevant = intersects(r, source) || intersects(r, target)
+                || n.getChildCount() >= 2 || containsInterestingText(n);
+        if (relevant || depth <= 2) {
+            count[0]++;
+            for (int i = 0; i < depth; i++) out.append("  ");
+            out.append(nodeSummary(n, r)).append('\n');
+        }
+        for (int i = 0; i < n.getChildCount() && count[0] < 220; i++) {
+            AccessibilityNodeInfo child = n.getChild(i);
+            dumpTree(child, source, target, out, depth + 1, count);
+            if (child != null) child.recycle();
+        }
+    }
+
+    private boolean containsInterestingText(AccessibilityNodeInfo n) {
+        String x = lower(n.getText()) + " " + lower(n.getContentDescription()) + " " + lower(n.getClassName());
+        return x.contains("folder") || x.contains("facebook") || x.contains("instagram");
+    }
+
+    private String describeNearestNode(AccessibilityNodeInfo root, HomeShortcut wanted) {
+        AccessibilityNodeInfo best = findNearestNode(root, wanted, null, new float[]{Float.MAX_VALUE});
+        if (best == null) return "missing";
+        Rect r = new Rect(); best.getBoundsInScreen(r);
+        String s = nodeSummary(best, r);
+        best.recycle();
+        return s;
+    }
+
+    private AccessibilityNodeInfo findNearestNode(AccessibilityNodeInfo n, HomeShortcut wanted, AccessibilityNodeInfo best, float[] bestDist) {
+        if (n == null) return best;
+        Rect r = new Rect(); n.getBoundsInScreen(r);
+        float dx = r.centerX() - wanted.centerX;
+        float dy = r.centerY() - wanted.centerY;
+        float dist = dx * dx + dy * dy;
+        String text = lower(n.getText());
+        String desc = lower(n.getContentDescription());
+        if (text.equals(lower(wanted.label)) || desc.equals(lower(wanted.label))) {
+            if (dist < bestDist[0]) {
+                if (best != null) best.recycle();
+                best = AccessibilityNodeInfo.obtain(n);
+                bestDist[0] = dist;
+            }
+        }
+        for (int i = 0; i < n.getChildCount(); i++) {
+            AccessibilityNodeInfo child = n.getChild(i);
+            best = findNearestNode(child, wanted, best, bestDist);
+            if (child != null) child.recycle();
+        }
+        return best;
+    }
+
+    private boolean intersects(Rect r, HomeShortcut s) {
+        if (r == null || s == null) return false;
+        return r.contains(s.centerX, s.centerY) || Math.abs(r.centerX() - s.centerX) < 100 && Math.abs(r.centerY() - s.centerY) < 100;
+    }
+
+    private String nodeSummary(AccessibilityNodeInfo n, Rect r) {
+        return "class=" + safe(n.getClassName())
+                + " text=" + safe(n.getText())
+                + " contentDescription=" + safe(n.getContentDescription())
+                + " viewId=" + safe(n.getViewIdResourceName())
+                + " package=" + safe(n.getPackageName())
+                + " bounds=" + r.flattenToString()
+                + " clickable=" + n.isClickable()
+                + " longClickable=" + n.isLongClickable()
+                + " visibleToUser=" + n.isVisibleToUser()
+                + " childCount=" + n.getChildCount();
+    }
+
+    private String safe(CharSequence x) { return x == null ? "" : x.toString().replace('\n', ' '); }
+    private String lower(CharSequence x) { return safe(x).toLowerCase(java.util.Locale.ROOT); }
     private boolean hasLabel(List<HomeShortcut> list,String label){for(HomeShortcut s:list)if(s.label.equalsIgnoreCase(label))return true;return false;}
+    public void appendDiagnostic(String s) { appendReport(s); }
     public String getSavedReport() { return getSharedPreferences("diagnostic", MODE_PRIVATE).getString("last_report", ""); }
     private void saveReport(String s) { getSharedPreferences("diagnostic", MODE_PRIVATE).edit().putString("last_report", s).apply(); }
     private void appendReport(String s) { saveReport(getSavedReport() + s); }

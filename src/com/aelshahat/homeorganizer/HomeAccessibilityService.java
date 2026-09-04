@@ -5,27 +5,33 @@ import android.accessibilityservice.AccessibilityServiceInfo;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
-import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 public class HomeAccessibilityService extends AccessibilityService {
     private static final String TAG = "AIHomeOrganizer";
     private static HomeAccessibilityService instance;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final GestureController gestures = new GestureController(this);
+    private final PageNavigator navigator = new PageNavigator(this);
+    private final HomeScreenController homeController = new HomeScreenController(this);
+    private final FolderController folderController = new FolderController(this);
     private List<HomeShortcut> lastShortcuts = new ArrayList<>();
+    private List<HomePage> lastPages = new ArrayList<>();
     private String lastLauncherPackage;
     private String lastAdapterName;
+    private boolean scanning;
 
     public interface TestCallback { void onResult(String result); }
+    public interface ScanCallback { void onFinished(String code); }
 
     @Override protected void onServiceConnected() {
-        super.onServiceConnected();
-        instance = this;
+        super.onServiceConnected(); instance = this;
         AccessibilityServiceInfo info = getServiceInfo();
         if (info != null) {
             info.flags |= AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS;
@@ -33,100 +39,101 @@ public class HomeAccessibilityService extends AccessibilityService {
             setServiceInfo(info);
         }
     }
-
-    @Override public void onAccessibilityEvent(AccessibilityEvent event) { }
-    @Override public void onInterrupt() { gestures.cancel(); }
-    @Override public void onDestroy() {
-        gestures.cancel();
-        if (instance == this) instance = null;
-        super.onDestroy();
-    }
+    @Override public void onAccessibilityEvent(android.view.accessibility.AccessibilityEvent event) { }
+    @Override public void onInterrupt() { navigator.cancel(); gestures.cancel(); scanning = false; }
+    @Override public void onDestroy() { navigator.cancel(); gestures.cancel(); scanning = false; if (instance == this) instance = null; super.onDestroy(); }
 
     public static HomeAccessibilityService getInstance() { return instance; }
     public boolean canPerformGestureNow() { return gestures.canPerformGesture(); }
     public List<HomeShortcut> getShortcuts() { return Collections.unmodifiableList(new ArrayList<>(lastShortcuts)); }
+    public List<HomePage> getPages() { return Collections.unmodifiableList(new ArrayList<>(lastPages)); }
     public HomeShortcut getReliableShortcut() { return lastShortcuts.isEmpty() ? null : lastShortcuts.get(0); }
     public String getLastLauncherPackage() { return lastLauncherPackage; }
+    public String getLastAdapterName() { return lastAdapterName; }
+    public boolean isScanning() { return scanning; }
 
-    public void scanHomeScreen() {
-        if (gestures.isRunning()) return;
-        boolean movedHome = performGlobalAction(GLOBAL_ACTION_HOME);
-        if (!movedHome) {
-            saveReport("SCAN FAILED\n\nCould not request the Home Screen from AccessibilityService.");
-            return;
-        }
-        handler.postDelayed(this::captureHomeScreen, 900);
+    public void scanHomeScreen() { scanHomeScreen(null); }
+
+    public void scanHomeScreen(ScanCallback callback) {
+        if (scanning) { if (callback != null) callback.onFinished("SCAN_ALREADY_RUNNING"); return; }
+        scanning = true;
+        saveReport("SCAN_STARTED\n");
+        boolean moved = performGlobalAction(GLOBAL_ACTION_HOME);
+        if (!moved) { scanning = false; saveReport("SCAN_FAILED\nCould not request Home Screen.\n"); if (callback != null) callback.onFinished("SCAN_FAILED"); return; }
+        handler.postDelayed(() -> scanPageLoop(0, new HashSet<>(), new ArrayList<>(), callback), 900);
     }
 
-    private void captureHomeScreen() {
+    private void scanPageLoop(final int pageIndex, final Set<String> seen, final List<HomePage> pages, final ScanCallback callback) {
         AccessibilityNodeInfo root = getRootInActiveWindow();
-        if (root == null) {
-            saveReport("SCAN FAILED\n\nNo active accessibility window was available.");
-            return;
-        }
-
+        if (root == null) { finishScan(pages, "SCAN_FAILED", callback); return; }
         String pkg = String.valueOf(root.getPackageName());
-        LauncherAdapter adapter = LauncherAdapter.forPackage(pkg);
-        lastLauncherPackage = pkg;
-        lastAdapterName = adapter.name();
-        lastShortcuts = adapter.findShortcuts(root, pkg);
-
-        StringBuilder out = new StringBuilder("HOME SCREEN DIAGNOSTIC\n=======================\n");
-        out.append("Launcher package: ").append(pkg).append("\n");
-        out.append("Adapter: ").append(lastAdapterName).append("\n");
-        out.append("Android: ").append(android.os.Build.VERSION.RELEASE)
-                .append(" (API ").append(android.os.Build.VERSION.SDK_INT).append(")\n\n");
-        out.append("Detected Home Screen shortcuts: ").append(lastShortcuts.size()).append("\n\n");
-        for (int i = 0; i < lastShortcuts.size(); i++) {
-            out.append("[").append(i + 1).append("] ").append(lastShortcuts.get(i).describe()).append("\n");
+        if (lastLauncherPackage != null && !lastLauncherPackage.equals(pkg)) {
+            root.recycle(); finishScan(pages, "SCAN_FAILED_LAUNCHER_CHANGED", callback); return;
         }
-        out.append("\nDetection notes:\n");
-        out.append("- Accessibility tree is primary; no hard-coded grid coordinates.\n");
-        out.append("- Launcher app icons require a visible labelled TextView with valid bounds and launcher-appropriate click/long-click behavior.\n");
-        out.append("- Search, clock/date/weather, navigation and launcher utility UI are excluded.\n");
-        out.append("- Duplicate identities are collapsed; componentName remains null when the launcher does not expose it through AccessibilityNodeInfo.\n");
-        if (lastShortcuts.isEmpty()) out.append("- No reliable shortcut found; Safe Drag Test remains disabled.\n");
-
-        saveReport(out.toString());
+        LauncherAdapter adapter = LauncherAdapter.forPackage(pkg);
+        lastLauncherPackage = pkg; lastAdapterName = adapter.name();
+        List<HomeShortcut> shortcuts = adapter.findShortcuts(root, pkg, pageIndex);
+        String signature = makePageSignature(shortcuts, root);
         root.recycle();
-        Log.i(TAG, "SCAN launcher=" + pkg + " adapter=" + lastAdapterName + " shortcuts=" + lastShortcuts.size());
+        if (seen.contains(signature)) {
+            appendReport("PAGE_LOOP_DETECTED page=" + pageIndex + "\n");
+            finishScan(pages, "MULTI_PAGE_SCAN_COMPLETE", callback); return;
+        }
+        seen.add(signature);
+        HomePage page = new HomePage(pageIndex, signature, pageIndex == 0, shortcuts);
+        pages.add(page);
+        appendReport("PAGE_SCAN_COMPLETE page=" + pageIndex + " shortcuts=" + shortcuts.size() + " signature=" + signature + "\n");
+        for (HomeShortcut s : shortcuts) appendReport("  " + s.describe() + "\n");
+
+        if (pageIndex >= 20) { finishScan(pages, "PAGE_LIMIT_REACHED", callback); return; }
+        AccessibilityNodeInfo navRoot = getRootInActiveWindow();
+        if (navRoot == null) { finishScan(pages, "MULTI_PAGE_SCAN_UNSUPPORTED", callback); return; }
+        navigator.next(navRoot, new PageNavigator.Callback() {
+            @Override public void onSuccess() { handler.postDelayed(() -> scanPageLoop(pageIndex + 1, seen, pages, callback), 650); }
+            @Override public void onFailure(String reason) {
+                appendReport("PAGE_NAVIGATION_FAILED page=" + pageIndex + " reason=" + reason + "\n");
+                finishScan(pages, "MULTI_PAGE_SCAN_UNSUPPORTED", callback);
+            }
+        });
+        navRoot.recycle();
+    }
+
+    private String makePageSignature(List<HomeShortcut> list, AccessibilityNodeInfo root) {
+        StringBuilder b = new StringBuilder(String.valueOf(root.getPackageName()));
+        for (HomeShortcut s : list) if (!s.hotseat) {
+            b.append('|').append(s.label).append('@')
+                    .append(s.centerX).append(',').append(s.centerY);
+        }
+        return b.toString();
+    }
+
+    private void finishScan(List<HomePage> pages, String code, ScanCallback callback) {
+        lastPages = new ArrayList<>(pages);
+        List<HomeShortcut> merged = new ArrayList<>();
+        for (HomePage p : pages) merged.addAll(p.shortcuts);
+        lastShortcuts = merged;
+        scanning = false;
+        appendReport("\n" + code + "\nPages detected: " + pages.size()
+                + "\nTotal shortcuts: " + merged.size() + "\n");
+        Log.i(TAG, code + " pages=" + pages.size() + " shortcuts=" + merged.size());
+        if (callback != null) callback.onFinished(code);
     }
 
     public void runSafeDragTest(final HomeShortcut selected, final TestCallback callback) {
         if (selected == null) { callback.onResult("TEST_FAILED_SHORTCUT_NOT_FOUND"); return; }
         if (!canPerformGestureNow()) { callback.onResult("TEST_FAILED_GESTURE_UNAVAILABLE"); return; }
-
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root == null) { callback.onResult("TEST_FAILED_LAUNCHER_CHANGED"); return; }
-        String currentPackage = String.valueOf(root.getPackageName());
-        LauncherAdapter adapter = LauncherAdapter.forPackage(currentPackage);
-        List<HomeShortcut> current = adapter.findShortcuts(root, currentPackage);
+        String pkg = String.valueOf(root.getPackageName());
+        List<HomeShortcut> current = LauncherAdapter.forPackage(pkg).findShortcuts(root, pkg, selected.pageIndex);
         root.recycle();
-
-        if (lastLauncherPackage == null || !lastLauncherPackage.equals(currentPackage)) {
-            callback.onResult("TEST_FAILED_LAUNCHER_CHANGED");
-            return;
-        }
-
-        HomeShortcut live = findSameShortcut(selected, current);
-        if (live == null) {
-            callback.onResult("TEST_FAILED_SHORTCUT_NOT_FOUND");
-            return;
-        }
-
-        Log.i(TAG, "TEST selected=" + live.describe());
-        final int sx = live.centerX;
-        final int sy = live.centerY;
-        gestures.safeDrag(sx, sy, 8, 0, new GestureController.Callback() {
-            @Override public void onSuccess() {
-                Log.i(TAG, "GESTURE callback=completed start=" + sx + "," + sy + " end=" + (sx + 8) + "," + sy + " return=" + sx + "," + sy);
-                handler.postDelayed(() -> verifyAfterGesture(live, callback), 700);
-            }
-            @Override public void onFailure(String reason) {
-                Log.w(TAG, "GESTURE callback=failure reason=" + reason);
-                saveReport(getSavedReport() + "\n\nGESTURE FAILURE: " + reason);
-                callback.onResult(reason.contains("capability") ? "TEST_FAILED_GESTURE_UNAVAILABLE" : "TEST_FAILED_VERIFICATION");
-            }
+        if (lastLauncherPackage == null || !lastLauncherPackage.equals(pkg)) { callback.onResult("TEST_FAILED_LAUNCHER_CHANGED"); return; }
+        HomeShortcut live = homeController.findShortcut(current, selected);
+        if (live == null) { callback.onResult("TEST_FAILED_SHORTCUT_NOT_FOUND"); return; }
+        appendReport("GESTURE_STARTED safe-probe label=" + live.label + "\n");
+        gestures.safeDrag(live.centerX, live.centerY, 45, 0, new GestureController.Callback() {
+            @Override public void onSuccess() { appendReport("GESTURE_COMPLETED\n"); handler.postDelayed(() -> verifyAfterGesture(live, callback), 800); }
+            @Override public void onFailure(String reason) { appendReport("GESTURE_FAILED reason=" + reason + "\n"); callback.onResult(reason.contains("CAPABILITY") ? "TEST_FAILED_GESTURE_UNAVAILABLE" : "TEST_FAILED_VERIFICATION"); }
         });
     }
 
@@ -134,59 +141,51 @@ public class HomeAccessibilityService extends AccessibilityService {
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root == null) { callback.onResult("TEST_FAILED_VERIFICATION"); return; }
         String pkg = String.valueOf(root.getPackageName());
-        if (lastLauncherPackage == null || !lastLauncherPackage.equals(pkg)) {
-            root.recycle();
-            callback.onResult("TEST_FAILED_LAUNCHER_CHANGED");
-            return;
-        }
-
-        LauncherAdapter adapter = LauncherAdapter.forPackage(pkg);
-        List<HomeShortcut> after = adapter.findShortcuts(root, pkg);
+        List<HomeShortcut> after = LauncherAdapter.forPackage(pkg).findShortcuts(root, pkg, before.pageIndex);
         root.recycle();
-        HomeShortcut match = findMatchForVerification(before, after);
+        HomeShortcut match = null;
+        for (HomeShortcut s : after) if (s.label.equalsIgnoreCase(before.label) && s.hotseat == before.hotseat) { match = s; break; }
         String result;
         if (match == null) result = "TEST_FAILED_VERIFICATION";
         else if (match.centerX != before.centerX || match.centerY != before.centerY) result = "TEST_SUCCESS_DRAG_DETECTED";
         else result = "TEST_SUCCESS_NO_MOVE";
-
-        Log.i(TAG, "VERIFY result=" + result + " before=" + before.centerX + "," + before.centerY
-                + " after=" + (match == null ? "missing" : match.centerX + "," + match.centerY));
-        String afterText = match == null ? "shortcut not found" : match.describe();
-        saveReport(getSavedReport() + "\n\nVERIFICATION RESULT: " + result
-                + "\nGesture start: " + before.centerX + "," + before.centerY
-                + "\nGesture probe end: " + (before.centerX + 8) + "," + before.centerY
-                + "\nGesture returned toward origin before release."
-                + "\nBefore: " + before.describe() + "\nAfter: " + afterText);
+        appendReport("VERIFICATION RESULT: " + result + "\nBefore: " + before.describe()
+                + "\nAfter: " + (match == null ? "missing" : match.describe()) + "\n");
         lastShortcuts = after;
         callback.onResult(result);
     }
 
-    private HomeShortcut findSameShortcut(HomeShortcut wanted, List<HomeShortcut> candidates) {
-        if (wanted.viewId != null && !wanted.viewId.isEmpty()) {
-            for (HomeShortcut s : candidates) {
-                if (wanted.viewId.equals(s.viewId) && wanted.label.equalsIgnoreCase(s.label)) return s;
-            }
-        }
-        for (HomeShortcut s : candidates) {
-            if (wanted.label.equalsIgnoreCase(s.label)
-                    && Math.abs(s.centerX - wanted.centerX) < 80
-                    && Math.abs(s.centerY - wanted.centerY) < 80) return s;
-        }
-        return null;
+    public void performFolderGesture(int sx, int sy, int tx, int ty, GestureController.Callback cb) {
+        gestures.dragAfterLongPress(sx, sy, tx, ty, 1100, cb);
     }
 
-    private HomeShortcut findMatchForVerification(HomeShortcut before, List<HomeShortcut> after) {
-        for (HomeShortcut s : after) {
-            if (before.viewId != null && !before.viewId.isEmpty()
-                    && before.viewId.equals(s.viewId)
-                    && before.label.equalsIgnoreCase(s.label)) return s;
-        }
-        for (HomeShortcut s : after) {
-            if (before.label.equalsIgnoreCase(s.label)) return s;
-        }
-        return null;
+    public void verifyFolderProbe(HomeShortcut source, HomeShortcut target, FolderController.Callback callback) {
+        handler.postDelayed(() -> {
+            AccessibilityNodeInfo root = getRootInActiveWindow();
+            if (root == null) { callback.onResult("TEST_FAILED_VERIFICATION", "No launcher window after folder probe"); return; }
+            String pkg = String.valueOf(root.getPackageName());
+            boolean folderLike = containsFolderNode(root);
+            List<HomeShortcut> after = LauncherAdapter.forPackage(pkg).findShortcuts(root, pkg, source.pageIndex);
+            root.recycle();
+            boolean sourcePresent = hasLabel(after, source.label);
+            boolean targetPresent = hasLabel(after, target.label);
+            if (folderLike && (sourcePresent || targetPresent)) callback.onResult("FOLDER_CREATED", "Folder-like launcher state detected after probe");
+            else callback.onResult("FOLDER_CREATION_UNSUPPORTED", "Launcher state could not be verified safely");
+        }, 900);
     }
 
-    private String getSavedReport() { return getSharedPreferences("diagnostic", MODE_PRIVATE).getString("last_report", ""); }
+    private boolean containsFolderNode(AccessibilityNodeInfo node) {
+        if (node == null) return false;
+        String c = String.valueOf(node.getClassName()).toLowerCase(java.util.Locale.US);
+        String d = String.valueOf(node.getContentDescription()).toLowerCase(java.util.Locale.US);
+        if (c.contains("folder") || d.contains("folder")) return true;
+        for (int i = 0; i < node.getChildCount(); i++) if (containsFolderNode(node.getChild(i))) return true;
+        return false;
+    }
+    private boolean hasLabel(List<HomeShortcut> list, String label) { for (HomeShortcut s : list) if (s.label.equalsIgnoreCase(label)) return true; return false; }
+    public void createFolder(HomeShortcut source, HomeShortcut target, FolderController.Callback cb) { folderController.createFolder(source, target, cb); }
+
+    public String getSavedReport() { return getSharedPreferences("diagnostic", MODE_PRIVATE).getString("last_report", ""); }
     private void saveReport(String s) { getSharedPreferences("diagnostic", MODE_PRIVATE).edit().putString("last_report", s).apply(); }
+    private void appendReport(String s) { saveReport(getSavedReport() + s); }
 }

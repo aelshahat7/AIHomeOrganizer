@@ -22,7 +22,6 @@ public final class PageNavigator {
         if (root == null) { callback.onFailure("NAVIGATION_NO_ROOT"); return; }
         Rect r = new Rect(); root.getBoundsInScreen(r);
         if (r.width() < 100 || r.height() < 100) { callback.onFailure("NAVIGATION_INVALID_BOUNDS"); return; }
-        AccessibilityNodeInfo node = root;
         try {
             if (service == null || service.getServiceInfo() == null
                     || (service.getServiceInfo().getCapabilities()
@@ -45,8 +44,9 @@ public final class PageNavigator {
             }, handler);
             if (!dispatched) finish(callback, false, "NAVIGATION_DISPATCH_REJECTED");
             else handler.postDelayed(() -> { if (running) finish(callback, false, "NAVIGATION_TIMEOUT"); }, 1800);
-        } finally {
-            node.recycle();
+        } catch (RuntimeException e) {
+            running = false;
+            callback.onFailure("NAVIGATION_EXCEPTION_" + e.getClass().getSimpleName());
         }
     }
 

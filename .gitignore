@@ -1,0 +1,34 @@
+# Android / Gradle
+.gradle/
+build/
+*/build/
+captures/
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+
+# Local SDK / NDK
+android-sdk/
+android-ndk/
+local.properties
+
+# APK / build outputs
+*.apk
+*.aab
+*.apks
+
+# Native / temporary
+.externalNativeBuild/
+.cxx/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Termux / temporary
+*.tmp
+*.temp

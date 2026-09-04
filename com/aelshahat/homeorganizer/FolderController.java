@@ -54,13 +54,15 @@ public final class FolderController {
             if (a.hotseat || b.hotseat || a.pageIndex != b.pageIndex) {
                 callback.onResult("FOLDER_CREATION_UNSUPPORTED", "Folder creation requires two normal shortcuts on the same page"); return;
             }
-            service.appendDiagnostic("SOURCE_BEFORE: " + a.describe() + "\nTARGET_BEFORE: " + b.describe() + "\n");
-            service.appendDiagnostic("GESTURE_STARTED source=" + a.label + " target=" + b.label + " page=" + a.pageIndex
-                    + " cell=" + a.cellX + "," + a.cellY + " -> " + b.cellX + "," + b.cellY + "\n");
-            service.performFolderGesture(a.centerX, a.centerY, b.centerX, b.centerY, new GestureController.Callback() {
+            final HomeShortcut liveSource = a;
+            final HomeShortcut liveTarget = b;
+            service.appendDiagnostic("SOURCE_BEFORE: " + liveSource.describe() + "\nTARGET_BEFORE: " + liveTarget.describe() + "\n");
+            service.appendDiagnostic("GESTURE_STARTED source=" + liveSource.label + " target=" + liveTarget.label + " page=" + liveSource.pageIndex
+                    + " cell=" + liveSource.cellX + "," + liveSource.cellY + " -> " + liveTarget.cellX + "," + liveTarget.cellY + "\n");
+            service.performFolderGesture(liveSource.centerX, liveSource.centerY, liveTarget.centerX, liveTarget.centerY, new GestureController.Callback() {
                 @Override public void onSuccess() {
                     service.appendDiagnostic("GESTURE_COMPLETED\nVERIFICATION_START\n");
-                    verify(a, b, callback, 0);
+                    verify(liveSource, liveTarget, callback, 0);
                 }
                 @Override public void onFailure(String reason) {
                     service.appendDiagnostic("GESTURE_FAILED reason=" + reason + "\n");
@@ -78,10 +80,10 @@ public final class FolderController {
         if (normalize(wanted).equals(label) && n.isVisibleToUser() && r.width() > 0 && r.height() > 0) {
             boolean hotseat = looksLikeHotseat(n, r);
             if (!hotseat && Math.abs(r.centerX() - expectedX) <= 220 && Math.abs(r.centerY() - expectedY) <= 220) {
-                return new HomeShortcut(n.getText() != null ? n.getText().toString() : n.getContentDescription().toString(),
-                        String.valueOf(n.getPackageName()), null, String.valueOf(n.getClassName()),
-                        n.getViewIdResourceName(), r, n.isClickable(), n.isLongClickable(),
-                        n.isVisibleToUser(), 1f, "live-direct-label-fallback", page, false, -1, -1);
+                String liveLabel = n.getText() != null ? n.getText().toString() : n.getContentDescription().toString();
+                return new HomeShortcut(liveLabel, String.valueOf(n.getPackageName()), null, String.valueOf(n.getClassName()),
+                        n.getViewIdResourceName(), r, n.isClickable(), n.isLongClickable(), n.isVisibleToUser(),
+                        1f, "live-direct-label-fallback", page, false, -1, -1);
             }
         }
         for (int i = 0; i < n.getChildCount(); i++) {
